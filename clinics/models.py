@@ -18,6 +18,12 @@ class Clinic(models.Model):
     is_active = models.BooleanField(default=True)
     is_24h = models.BooleanField(default=False)
     specialties = models.CharField(max_length=255, blank=True)
+    vets = models.ManyToManyField(
+        'users.User',
+        blank=True,
+        related_name='vet_clinics',
+        limit_choices_to={'role': 'vet'}
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
