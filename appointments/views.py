@@ -45,29 +45,23 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             )
         serializer.save(owner=self.request.user)
 
-    @action(
-        detail=True,
-        methods=['patch'],
-        permission_classes=[permissions.IsAuthenticated]
-    )
+    @action(detail=True, methods=['patch'], permission_classes=[permissions.IsAuthenticated])
     def confirm(self, request, pk=None):
         appointment = self.get_object()
         if not request.user.is_vet:
             return Response(
                 {'error': 'Solo los veterinarios pueden confirmar turnos.'},
                 status=status.HTTP_403_FORBIDDEN
-            )
+        )
         appointment.status = 'confirmed'
+        appointment.seen_by_owner = False
         appointment.save()
         return Response({'message': 'Turno confirmado.'})
 
-    @action(
-        detail=True,
-        methods=['patch'],
-        permission_classes=[permissions.IsAuthenticated]
-    )
+    @action(detail=True, methods=['patch'], permission_classes=[permissions.IsAuthenticated])
     def cancel(self, request, pk=None):
         appointment = self.get_object()
         appointment.status = 'cancelled'
+        appointment.seen_by_owner = False
         appointment.save()
         return Response({'message': 'Turno cancelado.'})

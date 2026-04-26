@@ -46,6 +46,6 @@ class AppointmentSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'owner', 'owner_name', 'pet', 'pet_name',
             'clinic', 'clinic_name', 'requested_date', 'reason',
-            'status', 'vet_notes', 'created_at', 'updated_at'
+            'status', 'vet_notes', 'seen_by_owner', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'owner', 'status', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'owner', 'status', 'seen_by_owner', 'created_at', 'updated_at']

@@ -7,23 +7,9 @@ from clinics.models import Clinic
 class Visit(models.Model):
     """Visita cargada por el veterinario despues de la consulta"""
 
-    pet = models.ForeignKey(
-        Pet,
-        on_delete=models.CASCADE,
-        related_name='visits'
-    )
-    vet = models.ForeignKey(
-        User,
-        on_delete=models.SET_NULL,
-        null=True,
-        related_name='visits_as_vet'
-    )
-    clinic = models.ForeignKey(
-        Clinic,
-        on_delete=models.SET_NULL,
-        null=True,
-        related_name='visits'
-    )
+    pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name='visits')
+    vet = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='visits_as_vet')
+    clinic = models.ForeignKey(Clinic, on_delete=models.SET_NULL, null=True, related_name='visits')
     date = models.DateTimeField()
     reason = models.CharField(max_length=255)
     diagnosis = models.TextField(blank=True)
@@ -49,29 +35,14 @@ class Appointment(models.Model):
         ('done', 'Realizado'),
     ]
 
-    owner = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        related_name='appointments'
-    )
-    pet = models.ForeignKey(
-        Pet,
-        on_delete=models.CASCADE,
-        related_name='appointments'
-    )
-    clinic = models.ForeignKey(
-        Clinic,
-        on_delete=models.CASCADE,
-        related_name='appointments'
-    )
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='appointments')
+    pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name='appointments')
+    clinic = models.ForeignKey(Clinic, on_delete=models.CASCADE, related_name='appointments')
     requested_date = models.DateTimeField()
     reason = models.CharField(max_length=255)
-    status = models.CharField(
-        max_length=15,
-        choices=STATUS_CHOICES,
-        default='pending'
-    )
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='pending')
     vet_notes = models.TextField(blank=True)
+    seen_by_owner = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
