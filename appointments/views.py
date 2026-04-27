@@ -65,3 +65,24 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         appointment.seen_by_owner = False
         appointment.save()
         return Response({'message': 'Turno cancelado.'})
+    
+    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def mark_seen(self, request):
+        Appointment.objects.filter(
+        owner=request.user,
+        seen_by_owner=False
+        ).update(seen_by_owner=True)
+        return Response({'message': 'Notificaciones marcadas como vistas.'})
+    
+    @action(detail=True, methods=['patch'], permission_classes=[permissions.IsAuthenticated])
+    def mark_no_show(self, request, pk=None):
+        appointment = self.get_object()
+        if not request.user.is_vet:
+            return Response(
+            {'error': 'Solo los veterinarios pueden marcar ausencias.'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+        appointment.status = 'no_show'
+        appointment.seen_by_owner = False
+        appointment.save()
+        return Response({'message': 'Turno marcado como ausente.'})

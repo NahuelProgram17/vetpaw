@@ -33,6 +33,7 @@ class Appointment(models.Model):
         ('confirmed', 'Confirmado'),
         ('cancelled', 'Cancelado'),
         ('done', 'Realizado'),
+        ('no_show', 'Ausente'),
     ]
 
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='appointments')
