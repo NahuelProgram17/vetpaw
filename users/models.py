@@ -24,6 +24,17 @@ class User(AbstractUser):
         null=True
     )
     bio = models.TextField(blank=True)
+    GENDER_CHOICES = [
+    ('male', 'Masculino'),
+    ('female', 'Femenino'),
+    ('other', 'Prefiero no decir'),
+]
+    gender = models.CharField(
+    max_length=10,
+    choices=GENDER_CHOICES,
+    default='other',
+    blank=True
+)
     created_at = models.DateTimeField(auto_now_add=True)
     email_verified = models.BooleanField(default=False)
     email_verification_token = models.UUIDField(default=uuid.uuid4, editable=False)
