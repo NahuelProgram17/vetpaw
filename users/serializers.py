@@ -56,3 +56,34 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 {'email': 'Debés verificar tu email antes de iniciar sesión. Revisá tu casilla de correo.'}
             )
         return data
+    
+class RegisterClinicSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(
+        write_only=True,
+        required=True,
+        validators=[validate_password]
+    )
+    password2 = serializers.CharField(write_only=True, required=True)
+
+    class Meta:
+        model = User
+        fields = [
+            'username', 'email', 'password', 'password2',
+        ]
+
+    def validate(self, attrs):
+        if attrs['password'] != attrs['password2']:
+            raise serializers.ValidationError(
+                {'password': 'Las contraseñas no coinciden.'}
+            )
+        if not attrs.get('email'):
+            raise serializers.ValidationError(
+                {'email': 'El email es obligatorio.'}
+            )
+        return attrs
+
+    def create(self, validated_data):
+        validated_data.pop('password2')
+        validated_data['role'] = 'clinic'
+        user = User.objects.create_user(**validated_data)
+        return user

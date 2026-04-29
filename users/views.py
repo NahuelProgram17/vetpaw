@@ -5,7 +5,7 @@ from django.core.mail import EmailMultiAlternatives
 from django.conf import settings
 from django.shortcuts import redirect
 from .models import User
-from .serializers import RegisterSerializer, UserSerializer, CustomTokenObtainPairSerializer
+from .serializers import RegisterSerializer, UserSerializer, CustomTokenObtainPairSerializer, RegisterClinicSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 
@@ -126,3 +126,13 @@ class ResendVerificationEmailView(APIView):
             return Response({'message': 'Email de verificación reenviado. Revisá tu casilla.'}, status=status.HTTP_200_OK)
         except User.DoesNotExist:
             return Response({'message': 'Si el email existe, recibirás el link en breve.'}, status=status.HTTP_200_OK)
+        
+        
+class RegisterClinicView(generics.CreateAPIView):
+    queryset = User.objects.all()
+    serializer_class = RegisterClinicSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def perform_create(self, serializer):
+        user = serializer.save()
+        send_verification_email(user)

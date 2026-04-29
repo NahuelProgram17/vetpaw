@@ -10,9 +10,15 @@ from .serializers import (
 )
 
 
-class ClinicViewSet(viewsets.ReadOnlyModelViewSet):
+class ClinicViewSet(viewsets.ModelViewSet):
     serializer_class = ClinicSerializer
-    permission_classes = [permissions.AllowAny]
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [permissions.AllowAny()]
+        if self.action == 'create':
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
         qs = Clinic.objects.filter(is_active=True)
@@ -24,11 +30,7 @@ class ClinicViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(province__icontains=province)
         return qs
 
-    @action(
-        detail=True,
-        methods=['post'],
-        permission_classes=[permissions.IsAuthenticated]
-    )
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def join(self, request, pk=None):
         clinic = self.get_object()
         user = request.user
@@ -60,20 +62,13 @@ class ClinicViewSet(viewsets.ReadOnlyModelViewSet):
             status=status.HTTP_200_OK
         )
 
-    @action(
-        detail=True,
-        methods=['post'],
-        permission_classes=[permissions.IsAuthenticated]
-    )
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def leave(self, request, pk=None):
         clinic = self.get_object()
         user = request.user
         serializer = LeaveClinicSerializer(data=request.data)
         if not serializer.is_valid():
-            return Response(
-                serializer.errors,
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         try:
             membership = ClinicMembership.objects.get(
                 owner=user, clinic=clinic, status='active'
@@ -99,6 +94,4 @@ class MembershipViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return ClinicMembership.objects.filter(
-            owner=self.request.user
-        )
+        return ClinicMembership.objects.filter(owner=self.request.user)

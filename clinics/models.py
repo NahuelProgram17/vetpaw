@@ -3,6 +3,14 @@ from users.models import User
 
 
 class Clinic(models.Model):
+    owner = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='clinic_profile',
+        null=True,
+        blank=True,
+        limit_choices_to={'role': 'clinic'}
+    )
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     address = models.CharField(max_length=255)
@@ -17,13 +25,7 @@ class Clinic(models.Model):
     )
     is_active = models.BooleanField(default=True)
     is_24h = models.BooleanField(default=False)
-    specialties = models.CharField(max_length=255, blank=True)
-    vets = models.ManyToManyField(
-        'users.User',
-        blank=True,
-        related_name='vet_clinics',
-        limit_choices_to={'role': 'vet'}
-    )
+    services = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -31,8 +33,6 @@ class Clinic(models.Model):
 
 
 class ClinicMembership(models.Model):
-    """Relacion entre dueño de mascota y veterinaria (max 5)"""
-
     STATUS_CHOICES = [
         ('active', 'Activo'),
         ('left', 'Se dio de baja'),

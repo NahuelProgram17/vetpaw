@@ -11,17 +11,19 @@ class VisitViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_vet:
-            return Visit.objects.filter(vet=user)
+        if user.is_clinic:
+            try:
+                clinic = user.clinic_profile
+                return Visit.objects.filter(clinic=clinic)
+            except Exception:
+                return Visit.objects.none()
         return Visit.objects.filter(pet__owner=user)
 
     def perform_create(self, serializer):
-        if not self.request.user.is_vet:
+        if not self.request.user.is_clinic:
             from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied(
-                'Solo los veterinarios pueden cargar visitas.'
-            )
-        serializer.save(vet=self.request.user)
+            raise PermissionDenied('Solo las clínicas pueden cargar visitas.')
+        serializer.save()
 
 
 class AppointmentViewSet(viewsets.ModelViewSet):
@@ -32,27 +34,28 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if user.is_owner:
             return Appointment.objects.filter(owner=user)
-        elif user.is_vet:
-            clinic_ids = user.vet_clinics.values_list('id', flat=True)
-            return Appointment.objects.filter(clinic_id__in=clinic_ids)
+        elif user.is_clinic:
+            try:
+                clinic = user.clinic_profile
+                return Appointment.objects.filter(clinic=clinic)
+            except Exception:
+                return Appointment.objects.none()
         return Appointment.objects.none()
 
     def perform_create(self, serializer):
         if not self.request.user.is_owner:
             from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied(
-                'Solo los dueños pueden pedir turnos.'
-            )
+            raise PermissionDenied('Solo los dueños pueden pedir turnos.')
         serializer.save(owner=self.request.user)
 
     @action(detail=True, methods=['patch'], permission_classes=[permissions.IsAuthenticated])
     def confirm(self, request, pk=None):
         appointment = self.get_object()
-        if not request.user.is_vet:
+        if not request.user.is_clinic:
             return Response(
-                {'error': 'Solo los veterinarios pueden confirmar turnos.'},
+                {'error': 'Solo las clínicas pueden confirmar turnos.'},
                 status=status.HTTP_403_FORBIDDEN
-        )
+            )
         appointment.status = 'confirmed'
         appointment.seen_by_owner = False
         appointment.save()
@@ -65,23 +68,23 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         appointment.seen_by_owner = False
         appointment.save()
         return Response({'message': 'Turno cancelado.'})
-    
+
     @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def mark_seen(self, request):
         Appointment.objects.filter(
-        owner=request.user,
-        seen_by_owner=False
+            owner=request.user,
+            seen_by_owner=False
         ).update(seen_by_owner=True)
         return Response({'message': 'Notificaciones marcadas como vistas.'})
-    
+
     @action(detail=True, methods=['patch'], permission_classes=[permissions.IsAuthenticated])
     def mark_no_show(self, request, pk=None):
         appointment = self.get_object()
-        if not request.user.is_vet:
+        if not request.user.is_clinic:
             return Response(
-            {'error': 'Solo los veterinarios pueden marcar ausencias.'},
-            status=status.HTTP_403_FORBIDDEN
-        )
+                {'error': 'Solo las clínicas pueden marcar ausencias.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
         appointment.status = 'no_show'
         appointment.seen_by_owner = False
         appointment.save()

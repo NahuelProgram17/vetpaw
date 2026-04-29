@@ -8,7 +8,6 @@ class Visit(models.Model):
     """Visita cargada por el veterinario despues de la consulta"""
 
     pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name='visits')
-    vet = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='visits_as_vet')
     clinic = models.ForeignKey(Clinic, on_delete=models.SET_NULL, null=True, related_name='visits')
     date = models.DateTimeField()
     reason = models.CharField(max_length=255)
@@ -16,6 +15,10 @@ class Visit(models.Model):
     treatment = models.TextField(blank=True)
     observations = models.TextField(blank=True)
     next_visit = models.DateField(null=True, blank=True)
+    # Datos del veterinario que atendió
+    vet_first_name = models.CharField(max_length=100)
+    vet_last_name = models.CharField(max_length=100)
+    vet_license = models.CharField(max_length=50)  # matrícula
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

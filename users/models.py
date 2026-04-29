@@ -7,7 +7,7 @@ class User(AbstractUser):
 
     ROLE_CHOICES = [
         ('owner', 'Dueño de mascota'),
-        ('vet', 'Veterinario/a'),
+        ('clinic', 'Veterinario/a'),
     ]
 
     role = models.CharField(
@@ -48,4 +48,4 @@ class User(AbstractUser):
 
     @property
     def is_vet(self):
-        return self.role == 'vet'
+        return self.role == 'clinic'

@@ -8,26 +8,20 @@ class ClinicSerializer(serializers.ModelSerializer):
     class Meta:
         model = Clinic
         fields = [
-            'id', 'name', 'description', 'address',
+            'id', 'owner', 'name', 'description', 'address',
             'province', 'locality', 'phone', 'email',
-            'logo', 'is_active', 'is_24h', 'specialties',
+            'logo', 'is_active', 'is_24h', 'services',
             'members_count', 'created_at'
         ]
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = ['id', 'created_at', 'members_count']
 
     def get_members_count(self, obj):
         return obj.members.filter(status='active').count()
 
 
 class ClinicMembershipSerializer(serializers.ModelSerializer):
-    clinic_name = serializers.CharField(
-        source='clinic.name',
-        read_only=True
-    )
-    clinic_locality = serializers.CharField(
-        source='clinic.locality',
-        read_only=True
-    )
+    clinic_name = serializers.CharField(source='clinic.name', read_only=True)
+    clinic_locality = serializers.CharField(source='clinic.locality', read_only=True)
 
     class Meta:
         model = ClinicMembership
