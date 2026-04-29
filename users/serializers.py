@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from .models import User
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework import serializers as drf_serializers
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -24,6 +26,10 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {'password': 'Las contraseñas no coinciden.'}
             )
+        if not attrs.get('email'):
+            raise serializers.ValidationError(
+                {'email': 'El email es obligatorio para verificar tu cuenta.'}
+            )
         return attrs
 
     def create(self, validated_data):
@@ -38,6 +44,15 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
             'role', 'phone', 'province', 'locality', 'avatar', 'bio',
-            'created_at',
+            'created_at', 'email_verified',
         ]
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = ['id', 'created_at', 'email_verified']
+        
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        if not self.user.email_verified:
+            raise drf_serializers.ValidationError(
+                {'email': 'Debés verificar tu email antes de iniciar sesión. Revisá tu casilla de correo.'}
+            )
+        return data

@@ -4,8 +4,8 @@ from .models import User
 
 @admin.register(User)
 class CustomUserAdmin(UserAdmin):
-    list_display = ['username', 'email', 'first_name', 'last_name', 'role', 'is_active']
-    list_filter = ['role', 'is_active']
+    list_display = ['username', 'email', 'first_name', 'last_name', 'role', 'is_active', 'email_verified']
+    list_filter = ['role', 'is_active', 'email_verified']
     fieldsets = UserAdmin.fieldsets + (
-        ('VetPaw', {'fields': ('role', 'phone', 'province', 'locality', 'bio', 'avatar')}),
+        ('VetPaw', {'fields': ('role', 'phone', 'province', 'locality', 'bio', 'avatar', 'email_verified')}),
     )

@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+import uuid
 
 
 class User(AbstractUser):
@@ -24,6 +25,8 @@ class User(AbstractUser):
     )
     bio = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    email_verified = models.BooleanField(default=False)
+    email_verification_token = models.UUIDField(default=uuid.uuid4, editable=False)
 
     def __str__(self):
         return f"{self.username} ({self.role})"
