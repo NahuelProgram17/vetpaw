@@ -60,11 +60,24 @@ class Vaccine(models.Model):
         on_delete=models.CASCADE,
         related_name='vaccines'
     )
+    clinic = models.ForeignKey(
+        Clinic,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='vaccines'
+    )
     name = models.CharField(max_length=100)
     date_applied = models.DateField()
     next_dose = models.DateField(null=True, blank=True)
     batch = models.CharField(max_length=50, blank=True)
     notes = models.TextField(blank=True)
+    vet_first_name = models.CharField(max_length=100, blank=True)
+    vet_last_name = models.CharField(max_length=100, blank=True)
+    vet_license = models.CharField(max_length=50, blank=True)
+
+    class Meta:
+        ordering = ['-date_applied']
 
     def __str__(self):
         return f"{self.name} — {self.pet.name}"

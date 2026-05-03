@@ -3,6 +3,9 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from .models import Visit, Appointment
 from .serializers import VisitSerializer, AppointmentSerializer
+from .models import Visit, Appointment, Review
+from .serializers import VisitSerializer, AppointmentSerializer, ReviewSerializer
+from django.db.models import Avg
 
 
 class VisitViewSet(viewsets.ModelViewSet):
@@ -23,7 +26,13 @@ class VisitViewSet(viewsets.ModelViewSet):
         if not self.request.user.is_clinic:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('Solo las clínicas pueden cargar visitas.')
-        serializer.save()
+        visit = serializer.save()
+    # Cuando se carga la visita, el turno confirmado pasa a "completado"
+        Appointment.objects.filter(
+        pet=visit.pet,
+        clinic=visit.clinic,
+        status='confirmed'
+    ).update(status='completed')
 
 
 class AppointmentViewSet(viewsets.ModelViewSet):
@@ -89,3 +98,43 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         appointment.seen_by_owner = False
         appointment.save()
         return Response({'message': 'Turno marcado como ausente.'})
+    
+class ReviewViewSet(viewsets.ModelViewSet):
+    serializer_class   = ReviewSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names  = ['get', 'post']
+
+    def get_queryset(self):
+        user = self.request.user
+        clinic_id = self.request.query_params.get('clinic')
+        if clinic_id:
+            return Review.objects.filter(clinic_id=clinic_id)
+        if user.is_owner:
+            return Review.objects.filter(owner=user)
+        if user.is_clinic:
+            try:
+                return Review.objects.filter(clinic=user.clinic_profile)
+            except Exception:
+                return Review.objects.none()
+        return Review.objects.none()
+
+    def perform_create(self, serializer):
+        from rest_framework.exceptions import PermissionDenied, ValidationError
+        user = self.request.user
+        if not user.is_owner:
+            raise PermissionDenied('Solo los dueños pueden dejar reseñas.')
+        appt_id = self.request.data.get('appointment')
+        try:
+            appt = Appointment.objects.get(id=appt_id, owner=user, status='completed')
+        except Appointment.DoesNotExist:
+            raise ValidationError('El turno no existe, no te pertenece o no está completado.')
+        if Review.objects.filter(appointment=appt).exists():
+            raise ValidationError('Ya calificaste esta visita.')
+        rating = int(self.request.data.get('rating', 0))
+        if not 1 <= rating <= 5:
+            raise ValidationError('El puntaje debe ser entre 1 y 5.')
+        serializer.save(
+            owner=user,
+            clinic=appt.clinic,
+            appointment=appt,
+        )

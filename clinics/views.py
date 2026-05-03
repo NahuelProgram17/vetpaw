@@ -2,6 +2,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.utils import timezone
+from math import radians, sin, cos, sqrt, atan2
 from .models import Clinic, ClinicMembership
 from .serializers import (
     ClinicSerializer,
@@ -28,6 +29,33 @@ class ClinicViewSet(viewsets.ModelViewSet):
             qs = qs.filter(locality__icontains=locality)
         if province:
             qs = qs.filter(province__icontains=province)
+
+        # Filtro por distancia (30 km)
+        lat = self.request.query_params.get('lat')
+        lon = self.request.query_params.get('lon')
+        if lat and lon:
+            try:
+                lat = float(lat)
+                lon = float(lon)
+            except ValueError:
+                return qs
+
+            R = 6371
+            results = []
+            for clinic in qs:
+                if clinic.latitude is None or clinic.longitude is None:
+                    continue
+                dlat = radians(clinic.latitude - lat)
+                dlon = radians(clinic.longitude - lon)
+                a = sin(dlat/2)**2 + cos(radians(lat)) * cos(radians(clinic.latitude)) * sin(dlon/2)**2
+                distance_km = R * 2 * atan2(sqrt(a), sqrt(1 - a))
+                if distance_km <= 30:
+                    clinic._distance_km = round(distance_km, 1)
+                    results.append(clinic)
+
+            results.sort(key=lambda c: c._distance_km)
+            return results
+
         return qs
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])

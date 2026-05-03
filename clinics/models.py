@@ -3,6 +3,8 @@ from users.models import User
 
 
 class Clinic(models.Model):
+    latitude  = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
     owner = models.OneToOneField(
         User,
         on_delete=models.CASCADE,
@@ -30,6 +32,14 @@ class Clinic(models.Model):
 
     def __str__(self):
         return f"{self.name} — {self.locality}"
+    
+    def save(self, *args, **kwargs):
+        if self.locality and (self.latitude is None or self.longitude is None):
+            from clinics.geocoding import get_coordinates
+            lat, lon = get_coordinates(self.locality, self.province)
+            self.latitude = lat
+            self.longitude = lon
+        super().save(*args, **kwargs)
 
 
 class ClinicMembership(models.Model):
@@ -63,3 +73,5 @@ class ClinicMembership(models.Model):
 
     def __str__(self):
         return f"{self.owner.username} @ {self.clinic.name}"
+    
+    

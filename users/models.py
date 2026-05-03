@@ -4,6 +4,8 @@ import uuid
 
 
 class User(AbstractUser):
+    latitude  = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
 
     ROLE_CHOICES = [
         ('owner', 'Dueño de mascota'),
@@ -47,5 +49,5 @@ class User(AbstractUser):
         return self.role == 'owner'
 
     @property
-    def is_vet(self):
+    def is_clinic(self):
         return self.role == 'clinic'

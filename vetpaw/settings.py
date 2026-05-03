@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     'pets',
     'clinics',
     'appointments',
+    'messaging',
 ]
 
 MIDDLEWARE = [
@@ -120,3 +121,5 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'vetpaw.app@gmail.com'
 EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = 'VetPaw <vetpaw.app@gmail.com>'
+
+TIME_ZONE = 'America/Argentina/Buenos_Aires'

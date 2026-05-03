@@ -35,7 +35,7 @@ class Appointment(models.Model):
         ('pending', 'Pendiente'),
         ('confirmed', 'Confirmado'),
         ('cancelled', 'Cancelado'),
-        ('done', 'Realizado'),
+        ('completed', 'Realizado'),
         ('no_show', 'Ausente'),
     ]
 
@@ -55,3 +55,29 @@ class Appointment(models.Model):
 
     def __str__(self):
         return f"{self.pet.name} @ {self.clinic.name} — {self.requested_date}"
+    
+class Review(models.Model):
+    appointment = models.OneToOneField(
+        Appointment,
+        on_delete=models.CASCADE,
+        related_name='review'
+    )
+    owner = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='reviews'
+    )
+    clinic = models.ForeignKey(
+        'clinics.Clinic',
+        on_delete=models.CASCADE,
+        related_name='reviews'
+    )
+    rating = models.PositiveSmallIntegerField()  # 1 a 5
+    comment = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.owner.username} → {self.clinic.name} ({self.rating}★)"

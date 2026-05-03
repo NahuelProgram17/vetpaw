@@ -36,4 +36,17 @@ class VaccineViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Vaccine.objects.filter(pet__owner=self.request.user)
+        user = self.request.user
+        if user.is_clinic:
+            try:
+                clinic = user.clinic_profile
+                return Vaccine.objects.filter(clinic=clinic)
+            except Exception:
+                return Vaccine.objects.none()
+        return Vaccine.objects.filter(pet__owner=user)
+
+    def perform_create(self, serializer):
+        if not self.request.user.is_clinic:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Solo las clínicas pueden cargar vacunas.')
+        serializer.save(clinic=self.request.user.clinic_profile)
