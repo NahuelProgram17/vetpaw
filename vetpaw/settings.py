@@ -15,10 +15,7 @@ CSRF_TRUSTED_ORIGINS = [
     "https://web-production-eaeb4.up.railway.app",
     "https://vetpaw-frontend.vercel.app",
 ]
-CSRF_COOKIE_SECURE = True
-SESSION_COOKIE_SECURE = True
-CSRF_COOKIE_SAMESITE = 'None'
-SESSION_COOKIE_SAMESITE = 'None'
+
 
 INSTALLED_APPS = [
     'django.contrib.admin',
