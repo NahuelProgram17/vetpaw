@@ -1,0 +1,1 @@
+web: gunicorn vetpaw.wsgi --log-file -
