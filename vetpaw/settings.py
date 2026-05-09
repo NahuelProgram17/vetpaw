@@ -137,5 +137,5 @@ EMAIL_HOST = 'smtp.resend.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'resend'
-EMAIL_HOST_PASSWORD = env ('re_bssr7MX3_Ma4MxnLGcSSs1vkAcnnGJ1n8')
+EMAIL_HOST_PASSWORD = env('RESEND_API_KEY')
 DEFAULT_FROM_EMAIL = 'VetPaw <onboarding@resend.dev>'
