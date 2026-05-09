@@ -12,7 +12,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 def send_verification_email(user):
     token = user.email_verification_token
-    verify_url = f"http://localhost:8000/api/users/verify-email/{token}/"
+    verify_url = f"https://web-production-eaeb4.up.railway.app/api/users/verify-email/{token}/"
 
     html_content = f"""
     <!DOCTYPE html>
@@ -96,9 +96,9 @@ class VerifyEmailView(APIView):
             if not user.email_verified:
                 user.email_verified = True
                 user.save()
-            return redirect('http://localhost:5173/login?verified=true')
+            return redirect('https://vetpaw-frontend.vercel.app/login?verified=true')
         except User.DoesNotExist:
-            return redirect('http://localhost:5173/login?verified=false')
+            return redirect('https://vetpaw-frontend.vercel.app/login?verified=false')
 
 
 class ProfileView(generics.RetrieveUpdateAPIView):
