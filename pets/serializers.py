@@ -13,7 +13,6 @@ class VaccineSerializer(serializers.ModelSerializer):
             'vet_first_name', 'vet_last_name', 'vet_license',
         ]
 
-
 class PetSerializer(serializers.ModelSerializer):
     vaccines = VaccineSerializer(many=True, read_only=True)
     owner_name = serializers.CharField(
@@ -24,6 +23,12 @@ class PetSerializer(serializers.ModelSerializer):
         source='get_species_display',
         read_only=True
     )
+    photo = serializers.SerializerMethodField()
+
+    def get_photo(self, obj):
+        if obj.photo:
+            return obj.photo.url
+        return None
 
     class Meta:
         model = Pet
