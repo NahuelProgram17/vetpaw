@@ -84,7 +84,8 @@ class RegisterView(generics.CreateAPIView):
 
     def perform_create(self, serializer):
         user = serializer.save()
-        send_verification_email(user)
+        user.email_verified = True
+        user.save()
 
 
 class VerifyEmailView(APIView):
@@ -135,4 +136,5 @@ class RegisterClinicView(generics.CreateAPIView):
 
     def perform_create(self, serializer):
         user = serializer.save()
-        send_verification_email(user)
+        user.email_verified = True
+        user.save()
