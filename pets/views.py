@@ -30,6 +30,13 @@ class PetViewSet(viewsets.ModelViewSet):
             raise PermissionDenied('Solo los dueños pueden registrar mascotas.')
         serializer.save(owner=self.request.user)
 
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        new_photo = self.request.FILES.get('photo')
+        if new_photo and instance.photo:
+            instance.photo.delete(save=False)
+        serializer.save()
+
 
 class VaccineViewSet(viewsets.ModelViewSet):
     serializer_class = VaccineSerializer
@@ -47,6 +54,5 @@ class VaccineViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         if not self.request.user.is_clinic:
-            from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('Solo las clínicas pueden cargar vacunas.')
         serializer.save(clinic=self.request.user.clinic_profile)
