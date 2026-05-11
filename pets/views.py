@@ -31,11 +31,11 @@ class PetViewSet(viewsets.ModelViewSet):
         serializer.save(owner=self.request.user)
 
     def perform_update(self, serializer):
-        instance = serializer.instance
         new_photo = self.request.FILES.get('photo')
-        if new_photo and instance.photo:
-            instance.photo.delete(save=False)
-        serializer.save()
+        if new_photo:
+            serializer.save(photo=new_photo)
+        else:
+            serializer.save()
 
 
 class VaccineViewSet(viewsets.ModelViewSet):
