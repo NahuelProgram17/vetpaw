@@ -135,6 +135,14 @@ class RegisterClinicView(generics.CreateAPIView):
     permission_classes = [permissions.AllowAny]
 
     def perform_create(self, serializer):
+        from clinics.models import Clinic
         user = serializer.save()
         user.email_verified = True
         user.save()
+        Clinic.objects.create(
+            owner=user,
+            name=user.username,
+            address='',
+            province='',
+            locality='',
+        )
