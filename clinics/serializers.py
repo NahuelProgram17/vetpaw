@@ -8,6 +8,7 @@ class ClinicSerializer(serializers.ModelSerializer):
     rating_avg    = serializers.SerializerMethodField()
     reviews_count = serializers.SerializerMethodField()
     distance_km   = serializers.SerializerMethodField()
+    is_member     = serializers.SerializerMethodField() 
 
     class Meta:
         model = Clinic
@@ -16,7 +17,7 @@ class ClinicSerializer(serializers.ModelSerializer):
             'province', 'locality', 'phone', 'email',
             'logo', 'is_active', 'is_24h', 'services',
             'members_count', 'rating_avg', 'reviews_count',
-            'distance_km', 'created_at'
+            'distance_km', 'is_member', 'created_at'
         ]
         read_only_fields = ['id', 'created_at', 'members_count', 'rating_avg', 'reviews_count', 'distance_km']
 
