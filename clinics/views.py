@@ -44,17 +44,19 @@ class ClinicViewSet(viewsets.ModelViewSet):
             results = []
             for clinic in qs:
                 if clinic.latitude is None or clinic.longitude is None:
+                    clinic._distance_km = None
+                    results.append(clinic)
                     continue
                 dlat = radians(clinic.latitude - lat)
                 dlon = radians(clinic.longitude - lon)
                 a = sin(dlat/2)**2 + cos(radians(lat)) * cos(radians(clinic.latitude)) * sin(dlon/2)**2
                 distance_km = R * 2 * atan2(sqrt(a), sqrt(1 - a))
-                if distance_km <= 30:
+                if distance_km <= 200:
                     clinic._distance_km = round(distance_km, 1)
                     results.append(clinic)
 
-            results.sort(key=lambda c: c._distance_km)
-            return results
+        results.sort(key=lambda c: (c._distance_km is None, c._distance_km or 0))
+        return results if results else qs
 
         return qs
 
