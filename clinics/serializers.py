@@ -8,7 +8,7 @@ class ClinicSerializer(serializers.ModelSerializer):
     rating_avg    = serializers.SerializerMethodField()
     reviews_count = serializers.SerializerMethodField()
     distance_km   = serializers.SerializerMethodField()
-    is_member     = serializers.SerializerMethodField() 
+    is_member     = serializers.SerializerMethodField()
 
     class Meta:
         model = Clinic
@@ -19,7 +19,7 @@ class ClinicSerializer(serializers.ModelSerializer):
             'members_count', 'rating_avg', 'reviews_count',
             'distance_km', 'is_member', 'created_at'
         ]
-        read_only_fields = ['id', 'created_at', 'members_count', 'rating_avg', 'reviews_count', 'distance_km']
+        read_only_fields = ['id', 'created_at', 'members_count', 'rating_avg', 'reviews_count', 'distance_km', 'is_member']
 
     def get_members_count(self, obj):
         return obj.members.filter(status='active').count()
@@ -33,6 +33,15 @@ class ClinicSerializer(serializers.ModelSerializer):
 
     def get_distance_km(self, obj):
         return getattr(obj, '_distance_km', None)
+
+    def get_is_member(self, obj):
+        try:
+            request = self.context.get('request')
+            if not request or not request.user or not request.user.is_authenticated:
+                return False
+            return obj.members.filter(owner=request.user, status='active').exists()
+        except Exception:
+            return False
 
 
 class ClinicMembershipSerializer(serializers.ModelSerializer):
