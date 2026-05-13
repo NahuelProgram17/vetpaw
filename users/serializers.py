@@ -61,10 +61,10 @@ class RegisterClinicSerializer(serializers.ModelSerializer):
         validators=[validate_password]
     )
     password2 = serializers.CharField(write_only=True, required=True)
-    clinic_name = serializers.CharField(write_only=True, required=True)
-    clinic_address = serializers.CharField(write_only=True, required=True)
-    clinic_province = serializers.CharField(write_only=True, required=True)
-    clinic_locality = serializers.CharField(write_only=True, required=True)
+    clinic_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    clinic_address = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    clinic_province = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    clinic_locality = serializers.CharField(write_only=True, required=False, allow_blank=True)
     clinic_phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
     clinic_description = serializers.CharField(write_only=True, required=False, allow_blank=True)
     clinic_is_24h = serializers.BooleanField(write_only=True, required=False, default=False)
@@ -84,6 +84,14 @@ class RegisterClinicSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({'password': 'Las contraseñas no coinciden.'})
         if not attrs.get('email'):
             raise serializers.ValidationError({'email': 'El email es obligatorio.'})
+        if not attrs.get('clinic_name'):
+            raise serializers.ValidationError({'clinic_name': 'El nombre de la clínica es obligatorio.'})
+        if not attrs.get('clinic_address'):
+            raise serializers.ValidationError({'clinic_address': 'La dirección es obligatoria.'})
+        if not attrs.get('clinic_province'):
+            raise serializers.ValidationError({'clinic_province': 'La provincia es obligatoria.'})
+        if not attrs.get('clinic_locality'):
+            raise serializers.ValidationError({'clinic_locality': 'La localidad es obligatoria.'})
         return attrs
 
     def create(self, validated_data):
