@@ -111,8 +111,4 @@ class RegisterClinicSerializer(serializers.ModelSerializer):
         user._clinic_data = clinic_data
         return user
 
-    def create(self, validated_data):
-        validated_data.pop('password2')
-        validated_data['role'] = 'clinic'
-        user = User.objects.create_user(**validated_data)
-        return user
+    
