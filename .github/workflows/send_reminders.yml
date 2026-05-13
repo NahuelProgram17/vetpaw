@@ -8,12 +8,25 @@ on:
 jobs:
   send-reminders:
     runs-on: ubuntu-latest
+    env:
+      SECRET_KEY: ${{ secrets.SECRET_KEY }}
+      DB_HOST: yamanote.proxy.rlwy.net
+      DB_PORT: 44224
+      DB_NAME: railway
+      DB_USER: postgres
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      DEFAULT_FROM_EMAIL: VetPaw <onboarding@resend.dev>
+      DEBUG: "False"
     steps:
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
       - name: Run send_reminders
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: |
-          railway run --service fc248dc1-1b9c-4f17-b1e0-f0b991714eb8 python manage.py send_reminders
+        run: python manage.py send_reminders
