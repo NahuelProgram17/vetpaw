@@ -1,5 +1,8 @@
 from rest_framework import viewsets, permissions
+from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.response import Response
+from django.http import FileResponse
 from .models import Pet, Vaccine
 from .serializers import PetSerializer, VaccineSerializer
 from clinics.models import ClinicMembership
@@ -36,6 +39,25 @@ class PetViewSet(viewsets.ModelViewSet):
             serializer.save(photo=new_photo)
         else:
             serializer.save()
+
+    @action(detail=True, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def pdf(self, request, pk=None):
+        pet = self.get_object()
+        user = request.user
+        if not user.is_clinic:
+            raise PermissionDenied('Solo las clínicas pueden generar el historial PDF.')
+        try:
+            clinic = user.clinic_profile
+        except Exception:
+            raise PermissionDenied('No tenés una clínica asociada.')
+        from .pdf import generate_pet_pdf
+        buffer = generate_pet_pdf(pet, clinic)
+        return FileResponse(
+            buffer,
+            as_attachment=True,
+            filename=f'historial_{pet.name}_{pet.id}.pdf',
+            content_type='application/pdf',
+        )
 
 
 class VaccineViewSet(viewsets.ModelViewSet):
