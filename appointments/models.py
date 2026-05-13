@@ -47,6 +47,7 @@ class Appointment(models.Model):
     status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='pending')
     vet_notes = models.TextField(blank=True)
     seen_by_owner = models.BooleanField(default=True)
+    reminder_sent = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -26,6 +26,7 @@ class Command(BaseCommand):
                 requested_date__gte=window_start,
                 requested_date__lte=window_end,
                 status__in=['pending', 'confirmed'],
+                reminder_sent=False,
             ).select_related('owner', 'pet', 'clinic')
 
             for appt in appointments:
@@ -38,7 +39,6 @@ class Command(BaseCommand):
                     timezone.get_current_timezone()
                 ).strftime("%d/%m/%Y a las %H:%M")
                 status_label = "Confirmado ✅" if appt.status == "confirmed" else "Pendiente ⏳"
-
                 subject = f"🐾 Recordatorio: turno de {appt.pet.name} {label}"
 
                 html = f"""
@@ -127,19 +127,20 @@ class Command(BaseCommand):
 </html>
 """
 
-                send_mail(
-                    subject=subject,
-                    message=f"Recordatorio: turno de {appt.pet.name} {label} — {fecha} en {appt.clinic.name}",
-                    from_email=settings.DEFAULT_FROM_EMAIL,
-                    recipient_list=[owner.email],
-                    html_message=html,
-                    fail_silently=False,
-                )
-                self.stdout.write(
-                    self.style.SUCCESS(
-                        f"  ✅ Turno [{appt.id}] → {owner.email} ({hours}hs)"
+                try:
+                    send_mail(
+                        subject=subject,
+                        message=f"Recordatorio: turno de {appt.pet.name} {label} — {fecha} en {appt.clinic.name}",
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        recipient_list=[owner.email],
+                        html_message=html,
+                        fail_silently=False,
                     )
-                )
+                    appt.reminder_sent = True
+                    appt.save(update_fields=['reminder_sent'])
+                    self.stdout.write(self.style.SUCCESS(f"  ✅ Turno [{appt.id}] → {owner.email} ({hours}hs)"))
+                except Exception as e:
+                    self.stdout.write(self.style.ERROR(f"  ✗ Error turno [{appt.id}]: {e}"))
 
     def send_vaccine_reminders(self):
         now = timezone.now().date()
@@ -239,23 +240,21 @@ class Command(BaseCommand):
 </html>
 """
 
-            send_mail(
-                subject=subject,
-                message=f"Recordatorio: vacuna {vaccine.name} de {vaccine.pet.name} vence {when} ({fecha_venc})",
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[owner.email],
-                html_message=html,
-                fail_silently=False,
-            )
-            self.stdout.write(
-                self.style.SUCCESS(
-                    f"  💉 Vacuna [{vaccine.id}] → {owner.email} (vence {fecha_venc})"
+            try:
+                send_mail(
+                    subject=subject,
+                    message=f"Recordatorio: vacuna {vaccine.name} de {vaccine.pet.name} vence {when} ({fecha_venc})",
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[owner.email],
+                    html_message=html,
+                    fail_silently=False,
                 )
-            )
+                self.stdout.write(self.style.SUCCESS(f"  💉 Vacuna [{vaccine.id}] → {owner.email} (vence {fecha_venc})"))
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f"  ✗ Error vacuna [{vaccine.id}]: {e}"))
 
     def send_unread_message_reminders(self):
         from messaging.models import Message
-        from django.db.models import Q
 
         cutoff = timezone.now() - timedelta(hours=12)
 
@@ -327,7 +326,7 @@ class Command(BaseCommand):
             <span class="badge-label">mensaje{'s' if count > 1 else ''} sin leer</span>
         </div>
         <div class="btn-wrap">
-            <a href="http://localhost:5173/messages" class="btn">Ver mensajes en VetPaw →</a>
+            <a href="https://vetpaw-frontend.vercel.app/messages" class="btn">Ver mensajes en VetPaw →</a>
         </div>
         <p class="msg" style="font-size:12px; color:#aaa; text-align:center;">
             Este es un aviso automático. El contenido de los mensajes solo está disponible dentro de VetPaw.
@@ -342,16 +341,15 @@ class Command(BaseCommand):
 </html>
 """
 
-            send_mail(
-                subject=subject,
-                message=f"Tenés {count} mensaje(s) sin leer de {senders} en VetPaw. Entrá a http://localhost:5173/messages para verlos.",
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
-                html_message=html,
-                fail_silently=False,
-            )
-            self.stdout.write(
-                self.style.SUCCESS(
-                    f"  💬 Aviso mensajes → {user.email} ({count} sin leer de {senders})"
+            try:
+                send_mail(
+                    subject=subject,
+                    message=f"Tenés {count} mensaje(s) sin leer de {senders} en VetPaw.",
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[user.email],
+                    html_message=html,
+                    fail_silently=False,
                 )
-            )
+                self.stdout.write(self.style.SUCCESS(f"  💬 Aviso mensajes → {user.email} ({count} sin leer de {senders})"))
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f"  ✗ Error mensajes [{uid}]: {e}"))
