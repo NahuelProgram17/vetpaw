@@ -61,23 +61,47 @@ class RegisterClinicSerializer(serializers.ModelSerializer):
         validators=[validate_password]
     )
     password2 = serializers.CharField(write_only=True, required=True)
+    clinic_name = serializers.CharField(write_only=True, required=True)
+    clinic_address = serializers.CharField(write_only=True, required=True)
+    clinic_province = serializers.CharField(write_only=True, required=True)
+    clinic_locality = serializers.CharField(write_only=True, required=True)
+    clinic_phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    clinic_description = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    clinic_is_24h = serializers.BooleanField(write_only=True, required=False, default=False)
+    clinic_services = serializers.ListField(write_only=True, required=False, default=list)
 
     class Meta:
         model = User
         fields = [
             'username', 'email', 'password', 'password2',
+            'clinic_name', 'clinic_address', 'clinic_province',
+            'clinic_locality', 'clinic_phone', 'clinic_description',
+            'clinic_is_24h', 'clinic_services',
         ]
 
     def validate(self, attrs):
         if attrs['password'] != attrs['password2']:
-            raise serializers.ValidationError(
-                {'password': 'Las contraseñas no coinciden.'}
-            )
+            raise serializers.ValidationError({'password': 'Las contraseñas no coinciden.'})
         if not attrs.get('email'):
-            raise serializers.ValidationError(
-                {'email': 'El email es obligatorio.'}
-            )
+            raise serializers.ValidationError({'email': 'El email es obligatorio.'})
         return attrs
+
+    def create(self, validated_data):
+        clinic_data = {
+            'name': validated_data.pop('clinic_name'),
+            'address': validated_data.pop('clinic_address'),
+            'province': validated_data.pop('clinic_province'),
+            'locality': validated_data.pop('clinic_locality'),
+            'phone': validated_data.pop('clinic_phone', ''),
+            'description': validated_data.pop('clinic_description', ''),
+            'is_24h': validated_data.pop('clinic_is_24h', False),
+            'services': validated_data.pop('clinic_services', []),
+        }
+        validated_data.pop('password2')
+        validated_data['role'] = 'clinic'
+        user = User.objects.create_user(**validated_data)
+        user._clinic_data = clinic_data
+        return user
 
     def create(self, validated_data):
         validated_data.pop('password2')

@@ -136,13 +136,10 @@ class RegisterClinicView(generics.CreateAPIView):
 
     def perform_create(self, serializer):
         from clinics.models import Clinic
-        user = serializer.save()
-        user.email_verified = True
-        user.save()
-        Clinic.objects.create(
-            owner=user,
-            name=user.username,
-            address='',
-            province='',
-            locality='',
-        )
+        from django.db import transaction
+        with transaction.atomic():
+            user = serializer.save()
+            user.email_verified = True
+            user.save()
+            clinic_data = getattr(user, '_clinic_data', {})
+            Clinic.objects.create(owner=user, **clinic_data)
