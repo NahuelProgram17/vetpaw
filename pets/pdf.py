@@ -30,8 +30,8 @@ def generate_pet_pdf(pet, clinic):
     GRAY = colors.HexColor('#6b7280')
 
     # Estilos
-    title_style = ParagraphStyle('title', fontSize=22, textColor=PRIMARY, fontName='Helvetica-Bold', spaceAfter=4)
-    subtitle_style = ParagraphStyle('subtitle', fontSize=11, textColor=GRAY, fontName='Helvetica', spaceAfter=2)
+    title_style = ParagraphStyle('title', fontSize=22, textColor=PRIMARY, fontName='Helvetica-Bold', spaceAfter=0)
+    subtitle_style = ParagraphStyle('subtitle', fontSize=11, textColor=GRAY, fontName='Helvetica', spaceBefore=0, spaceAfter=2)
     section_style = ParagraphStyle('section', fontSize=13, textColor=ACCENT, fontName='Helvetica-Bold', spaceBefore=16, spaceAfter=6)
     body_style = ParagraphStyle('body', fontSize=10, textColor=PRIMARY, fontName='Helvetica', spaceAfter=4)
     small_style = ParagraphStyle('small', fontSize=9, textColor=GRAY, fontName='Helvetica')
