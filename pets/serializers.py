@@ -37,6 +37,7 @@ class PetSerializer(serializers.ModelSerializer):
             'breed', 'sex', 'birth_date', 'weight',
             'color', 'microchip', 'photo', 'allergies',
             'notes', 'is_neutered', 'vaccines',
+            'feeding', 'habitat', 'lives_with_animals',
             'owner', 'owner_name', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'owner', 'created_at', 'updated_at']
