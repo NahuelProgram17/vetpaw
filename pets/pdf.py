@@ -6,6 +6,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from io import BytesIO
 from django.utils import timezone
+from appointments.models import Visit
 
 
 def generate_pet_pdf(pet, clinic):
@@ -36,7 +37,7 @@ def generate_pet_pdf(pet, clinic):
     small_style = ParagraphStyle('small', fontSize=9, textColor=GRAY, fontName='Helvetica')
 
     # Header
-    elements.append(Paragraph('🐾 VetPaw', title_style))
+    elements.append(Paragraph('VetPaw', title_style))
     elements.append(Paragraph('Historial Clínico Digital', subtitle_style))
     elements.append(Paragraph(f'Emitido por: {clinic.name} — {timezone.now().strftime("%d/%m/%Y")}', small_style))
     elements.append(HRFlowable(width='100%', thickness=2, color=ACCENT, spaceAfter=12))
