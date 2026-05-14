@@ -20,6 +20,22 @@ class Pet(models.Model):
         ('male', 'Macho'),
         ('female', 'Hembra'),
     ]
+    
+    FEEDING_CHOICES = [
+        ('balanced', 'Balanceada'),
+        ('homemade', 'Casera'),
+        ('mixed', 'Mixta'),
+    ]
+
+    HABITAT_CHOICES = [
+        ('apartment', 'Departamento'),
+        ('house', 'Casa con patio'),
+        ('field', 'Campo'),
+    ]
+
+    feeding = models.CharField(max_length=20, choices=FEEDING_CHOICES, blank=True)
+    habitat = models.CharField(max_length=20, choices=HABITAT_CHOICES, blank=True)
+    lives_with_animals = models.BooleanField(default=False)
 
     owner = models.ForeignKey(
         User,
