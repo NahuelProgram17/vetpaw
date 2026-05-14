@@ -26,13 +26,13 @@ class VisitViewSet(viewsets.ModelViewSet):
         if not self.request.user.is_clinic:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('Solo las clínicas pueden cargar visitas.')
-        visit = serializer.save()
-    # Cuando se carga la visita, el turno confirmado pasa a "completado"
+        clinic = self.request.user.clinic_profile
+        visit = serializer.save(clinic=clinic)
         Appointment.objects.filter(
-        pet=visit.pet,
-        clinic=visit.clinic,
-        status='confirmed'
-    ).update(status='completed')
+            pet=visit.pet,
+            clinic=clinic,
+            status='confirmed'
+        ).update(status='completed')
 
 
 class AppointmentViewSet(viewsets.ModelViewSet):
