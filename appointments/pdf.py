@@ -6,6 +6,8 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.enums import TA_CENTER
 from io import BytesIO
 from django.utils import timezone
+from datetime import timezone as tz
+import pytz
 
 
 def generate_agenda_pdf(clinic, appointments, date):
@@ -43,14 +45,19 @@ def generate_agenda_pdf(clinic, appointments, date):
     elements.append(Paragraph(f'{clinic.name} — {date.strftime("%d/%m/%Y")}', small_style))
     elements.append(HRFlowable(width='100%', thickness=2, color=ACCENT, spaceAfter=12))
 
-    elements.append(Paragraph(f'Agenda del {date.strftime("%A %d de %B de %Y")}', section_style))
+    DIAS = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo']
+    MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre']
+    dia_nombre = DIAS[date.weekday()]
+    mes_nombre = MESES[date.month - 1]
+    elements.append(Paragraph(f'Agenda del {dia_nombre} {date.day} de {mes_nombre} de {date.year}', section_style))
 
     if not appointments:
         elements.append(Paragraph('No hay turnos registrados para este día.', body_style))
     else:
         data = [['Hora', 'Mascota', 'Dueño', 'Motivo', 'Estado']]
         for appt in appointments:
-            hora = appt.requested_date.strftime('%H:%M')
+            argentina = pytz.timezone('America/Argentina/Buenos_Aires')
+            hora = appt.requested_date.astimezone(argentina).strftime('%H:%M')
             mascota = getattr(appt.pet, 'name', '—')
             dueno = appt.owner.get_full_name() or appt.owner.username
             motivo = appt.reason or '—'
