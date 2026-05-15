@@ -1,3 +1,4 @@
+from django.http import FileResponse
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -98,6 +99,41 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         appointment.seen_by_owner = False
         appointment.save()
         return Response({'message': 'Turno marcado como ausente.'})
+    
+    
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def agenda_pdf(self, request):
+        if not request.user.is_clinic:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Solo las clínicas pueden descargar la agenda.')
+        try:
+            clinic = request.user.clinic_profile
+        except Exception:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('No tenés una clínica asociada.')
+    
+        date_str = request.query_params.get('date')
+        if date_str:
+            from datetime import datetime
+            date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        else:
+            from django.utils import timezone
+            date = timezone.now().date()
+
+        appointments = Appointment.objects.filter(
+            clinic=clinic,
+            requested_date__date=date,
+        ).exclude(status='cancelled').order_by('requested_date')
+
+        from .pdf import generate_agenda_pdf
+        buffer = generate_agenda_pdf(clinic, appointments, date)
+        return FileResponse(
+            buffer,
+            as_attachment=True,
+            filename=f'agenda_{date}.pdf',
+            content_type='application/pdf',
+        )
+    
     
 class ReviewViewSet(viewsets.ModelViewSet):
     serializer_class   = ReviewSerializer
