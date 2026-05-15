@@ -54,9 +54,8 @@ def generate_pet_pdf(pet, clinic):
         ['Fecha de nacimiento', pet.birth_date.strftime('%d/%m/%Y') if pet.birth_date else '—', 'Peso', f'{pet.weight} kg' if pet.weight else '—'],
         ['Color', pet.color or '—', 'Microchip', pet.microchip or '—'],
         ['Castrado/a', 'Sí' if pet.is_neutered else 'No', 'Alergias', pet.allergies or '—'],
-        ['Castrado/a', 'Sí' if pet.is_neutered else 'No', 'Alergias', pet.allergies or '—'],
         ['Alimentación', {'balanced':'Balanceada','homemade':'Casera','mixed':'Mixta'}.get(pet.feeding, '—'), 'Hábitat', {'apartment':'Departamento','house':'Casa con patio','field':'Campo'}.get(pet.habitat, '—')],
-        ['Convive con otros animales', 'Sí' if pet.lives_with_animals else 'No', '', ''],
+        ['Convive c/otros animales', 'Sí' if pet.lives_with_animals else 'No', '', ''],
     ]
 
     pet_table = Table(pet_data, colWidths=[3.5*cm, 5.5*cm, 3.5*cm, 5.5*cm])
