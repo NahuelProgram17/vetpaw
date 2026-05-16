@@ -1,25 +1,26 @@
 # lost_pets views - v1
 from rest_framework import status
-from rest_framework.decorators import api_view, parser_classes
+from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
+from rest_framework.permissions import AllowAny
 from django.utils import timezone
 from .models import LostPet
 from .serializers import LostPetSerializer
 
 
 @api_view(['GET'])
+@permission_classes([AllowAny])
 def list_lost_pets(request):
-    """Lista solo los activos (no expirados)"""
     pets = LostPet.objects.filter(expires_at__gt=timezone.now())
     serializer = LostPetSerializer(pets, many=True)
     return Response(serializer.data)
 
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 @parser_classes([MultiPartParser, FormParser])
 def create_lost_pet(request):
-    """Crea un reporte — cualquiera puede publicar"""
     serializer = LostPetSerializer(data=request.data)
     if serializer.is_valid():
         serializer.save()
@@ -28,8 +29,8 @@ def create_lost_pet(request):
 
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def report_lost_pet(request, pk):
-    """Incrementa el contador de reportes"""
     try:
         pet = LostPet.objects.get(pk=pk, expires_at__gt=timezone.now())
     except LostPet.DoesNotExist:
