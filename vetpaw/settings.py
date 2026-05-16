@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     'clinics',
     'appointments',
     'messaging',
+    'lost_pets'
 ]
 
 MIDDLEWARE = [
