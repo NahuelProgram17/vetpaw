@@ -14,6 +14,8 @@ ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
 CSRF_TRUSTED_ORIGINS = [
     "https://web-production-eaeb4.up.railway.app",
     "https://vetpaw-frontend.vercel.app",
+    "https://www.vetpaw.com.ar",
+    "https://vetpaw.com.ar",
 ]
 
 
@@ -111,8 +113,9 @@ REST_FRAMEWORK = {
 }
 
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
-    'http://localhost:5173',
-    'http://localhost:3000',
+    'https://vetpaw-frontend.vercel.app',
+    'https://www.vetpaw.com.ar',
+    'https://vetpaw.com.ar',
 ])
 
 SPECTACULAR_SETTINGS = {
