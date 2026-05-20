@@ -51,3 +51,5 @@ class User(AbstractUser):
     @property
     def is_clinic(self):
         return self.role == 'clinic'
+    
+    is_approved = models.BooleanField(default=False)
