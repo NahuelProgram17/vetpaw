@@ -19,6 +19,7 @@ class PetSerializer(serializers.ModelSerializer):
         source='owner.get_full_name',
         read_only=True
     )
+    owner_phone = serializers.SerializerMethodField()
     species_display = serializers.CharField(
         source='get_species_display',
         read_only=True
@@ -30,6 +31,11 @@ class PetSerializer(serializers.ModelSerializer):
             return obj.photo.url
         return None
 
+    def get_owner_phone(self, obj):
+        if obj.owner:
+            return obj.owner.phone or ""
+        return ""
+
     class Meta:
         model = Pet
         fields = [
@@ -38,6 +44,6 @@ class PetSerializer(serializers.ModelSerializer):
             'color', 'microchip', 'photo', 'allergies',
             'notes', 'is_neutered', 'vaccines',
             'feeding', 'habitat', 'lives_with_animals',
-            'owner', 'created_at', 'updated_at'
+            'owner', 'owner_name', 'owner_phone', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'owner', 'created_at', 'updated_at']
