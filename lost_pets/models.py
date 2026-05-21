@@ -14,11 +14,16 @@ class LostPet(models.Model):
         ('home_phone', 'Teléfono de casa'),
         ('email', 'Email'),
     ]
+    REPORT_TYPE_CHOICES = [
+        ('found', 'Encontré una mascota'),
+        ('lost', 'Perdí mi mascota'),
+    ]
 
     photo = cloudinary.models.CloudinaryField('image')
     description = models.TextField()
     contact_type = models.CharField(max_length=20, choices=CONTACT_CHOICES)
     contact_value = models.CharField(max_length=150)
+    report_type = models.CharField(max_length=10, choices=REPORT_TYPE_CHOICES, default='found')
     report_count = models.PositiveIntegerField(default=0)
     expires_at = models.DateTimeField(default=expiry_default)
     created_at = models.DateTimeField(auto_now_add=True)
