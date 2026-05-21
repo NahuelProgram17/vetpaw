@@ -4,11 +4,11 @@ from .models import User
 
 @admin.register(User)
 class CustomUserAdmin(UserAdmin):
-    list_display = ['username', 'email', 'first_name', 'last_name', 'role', 'is_approved', 'is_active', 'email_verified']
-    list_filter = ['role', 'is_active', 'email_verified', 'is_approved']
+    list_display = ['username', 'email', 'first_name', 'last_name', 'role', 'is_approved', 'is_active']
+    list_filter = ['role', 'is_active', 'is_approved']
     actions = ['aprobar_clinicas', 'desaprobar_clinicas']
     fieldsets = UserAdmin.fieldsets + (
-        ('VetPaw', {'fields': ('role', 'phone', 'province', 'locality', 'bio', 'avatar', 'email_verified', 'is_approved')}),
+        ('VetPaw', {'fields': ('role', 'phone', 'province', 'locality', 'bio', 'avatar', 'is_approved')}),
     )
 
     def aprobar_clinicas(self, request, queryset):
