@@ -41,7 +41,7 @@ def generate_pet_pdf(pet, clinic):
     from reportlab.platypus import Image as RLImage
     logo_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'static', 'logo_vetpaw.png')
     if os.path.exists(logo_path):
-        logo = RLImage(logo_path, width=2.5*cm, height=2.5*cm)
+        logo = RLImage(logo_path, width=3.5*cm, height=2.5*cm)
         logo.hAlign = 'RIGHT'
         elements.append(logo)
     elements.append(Paragraph('VetPaw', title_style))
