@@ -37,6 +37,13 @@ def generate_pet_pdf(pet, clinic):
     small_style = ParagraphStyle('small', fontSize=9, textColor=GRAY, fontName='Helvetica')
 
     # Header
+    import os
+    from reportlab.platypus import Image as RLImage
+    logo_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'static', 'logo_vetpaw.png')
+    if os.path.exists(logo_path):
+        logo = RLImage(logo_path, width=3*cm, height=3*cm)
+        logo.hAlign = 'RIGHT'
+        elements.append(logo)
     elements.append(Paragraph('VetPaw', title_style))
     elements.append(Paragraph('Historial Clínico Digital', subtitle_style))
     elements.append(Paragraph(f'Emitido por: {clinic.name} — {timezone.now().strftime("%d/%m/%Y")}', small_style))
