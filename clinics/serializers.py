@@ -1,6 +1,52 @@
 from rest_framework import serializers
-from .models import Clinic, ClinicMembership
 from django.db.models import Avg
+from .models import Clinic, ClinicMembership
+from appointments.models import Review  # ← cambia esto
+
+
+class ReviewSerializer(serializers.ModelSerializer):
+    owner_name = serializers.CharField(source='owner.get_full_name', read_only=True)
+
+    class Meta:
+        model = Review
+        fields = ['id', 'owner_name', 'rating', 'comment', 'created_at']
+        read_only_fields = ['id', 'owner_name', 'created_at']
+
+    def validate_rating(self, value):
+        if not 1 <= value <= 5:
+            raise serializers.ValidationError("El rating debe ser entre 1 y 5.")
+        return value
+
+
+class PublicClinicSerializer(serializers.ModelSerializer):
+    rating_avg    = serializers.SerializerMethodField()
+    reviews_count = serializers.SerializerMethodField()
+    reviews       = serializers.SerializerMethodField()
+    members_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Clinic
+        fields = [
+            'id', 'slug', 'name', 'description', 'address',
+            'province', 'locality', 'phone',
+            'logo', 'is_24h', 'services',
+            'rating_avg', 'reviews_count', 'reviews',
+            'members_count',
+        ]
+
+    def get_rating_avg(self, obj):
+        avg = obj.reviews.aggregate(avg=Avg('rating'))['avg']
+        return round(avg, 1) if avg else None
+
+    def get_reviews_count(self, obj):
+        return obj.reviews.count()
+
+    def get_reviews(self, obj):
+        reviews = obj.reviews.order_by('-created_at')[:10]
+        return ReviewSerializer(reviews, many=True).data
+
+    def get_members_count(self, obj):
+        return obj.members.filter(status='active').count()
 
 
 class ClinicSerializer(serializers.ModelSerializer):
@@ -13,13 +59,13 @@ class ClinicSerializer(serializers.ModelSerializer):
     class Meta:
         model = Clinic
         fields = [
-            'id', 'owner', 'name', 'description', 'address',
+            'id', 'owner', 'name', 'slug', 'description', 'address',
             'province', 'locality', 'phone', 'email',
             'logo', 'is_active', 'is_24h', 'services',
             'members_count', 'rating_avg', 'reviews_count',
             'distance_km', 'is_member', 'created_at'
         ]
-        read_only_fields = ['id', 'created_at', 'members_count', 'rating_avg', 'reviews_count', 'distance_km', 'is_member']
+        read_only_fields = ['id', 'slug', 'created_at', 'members_count', 'rating_avg', 'reviews_count', 'distance_km', 'is_member']
 
     def get_members_count(self, obj):
         return obj.members.filter(status='active').count()
@@ -59,5 +105,6 @@ class ClinicMembershipSerializer(serializers.ModelSerializer):
 
 
 class LeaveClinicSerializer(serializers.Serializer):
+    leave_reason = serializers.CharField(required=True)
     leave_reason = serializers.CharField(required=True)
     leave_rating = serializers.IntegerField(min_value=1, max_value=5)

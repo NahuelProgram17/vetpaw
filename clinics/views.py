@@ -7,7 +7,8 @@ from .models import Clinic, ClinicMembership
 from .serializers import (
     ClinicSerializer,
     ClinicMembershipSerializer,
-    LeaveClinicSerializer
+    LeaveClinicSerializer,
+    PublicClinicSerializer,
 )
 
 
@@ -15,7 +16,7 @@ class ClinicViewSet(viewsets.ModelViewSet):
     serializer_class = ClinicSerializer
 
     def get_permissions(self):
-        if self.action in ['list', 'retrieve']:
+        if self.action in ['list', 'retrieve', 'public_profile']:
             return [permissions.AllowAny()]
         if self.action == 'create':
             return [permissions.AllowAny()]
@@ -56,6 +57,15 @@ class ClinicViewSet(viewsets.ModelViewSet):
             return results if results else qs
 
         return qs
+
+    @action(detail=False, methods=['get'], url_path='perfil/(?P<slug>[^/.]+)', permission_classes=[permissions.AllowAny])
+    def public_profile(self, request, slug=None):
+        try:
+            clinic = Clinic.objects.get(slug=slug, is_active=True)
+        except Clinic.DoesNotExist:
+            return Response({'error': 'Clínica no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = PublicClinicSerializer(clinic, context={'request': request})
+        return Response(serializer.data)
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def join(self, request, pk=None):
