@@ -22,11 +22,7 @@ class Clinic(models.Model):
     locality = models.CharField(max_length=100)
     phone = models.CharField(max_length=20, blank=True)
     email = models.EmailField(blank=True)
-    logo = models.ImageField(
-        upload_to='clinics/',
-        blank=True,
-        null=True
-    )
+    logo = models.ImageField(upload_to='clinics/', blank=True, null=True)
     is_active = models.BooleanField(default=True)
     is_24h = models.BooleanField(default=False)
     services = models.JSONField(default=list, blank=True)
@@ -61,20 +57,12 @@ class ClinicMembership(models.Model):
     ]
 
     owner = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        related_name='memberships'
+        User, on_delete=models.CASCADE, related_name='memberships'
     )
     clinic = models.ForeignKey(
-        Clinic,
-        on_delete=models.CASCADE,
-        related_name='members'
+        Clinic, on_delete=models.CASCADE, related_name='members'
     )
-    status = models.CharField(
-        max_length=10,
-        choices=STATUS_CHOICES,
-        default='active'
-    )
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='active')
     leave_reason = models.TextField(blank=True)
     leave_rating = models.IntegerField(null=True, blank=True)
     joined_at = models.DateTimeField(auto_now_add=True)
@@ -85,3 +73,19 @@ class ClinicMembership(models.Model):
 
     def __str__(self):
         return f"{self.owner.username} @ {self.clinic.name}"
+
+
+class ClinicPhoto(models.Model):
+    clinic = models.ForeignKey(
+        Clinic, on_delete=models.CASCADE, related_name='photos'
+    )
+    image = models.ImageField(upload_to='clinic_photos/')
+    caption = models.CharField(max_length=100, blank=True)
+    order = models.PositiveSmallIntegerField(default=0)  # para ordenar las fotos
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['order', 'created_at']
+
+    def __str__(self):
+        return f"{self.clinic.name} — foto {self.id}"

@@ -1,14 +1,16 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser
 from django.utils import timezone
 from math import radians, sin, cos, sqrt, atan2
-from .models import Clinic, ClinicMembership
+from .models import Clinic, ClinicMembership, ClinicPhoto
 from .serializers import (
     ClinicSerializer,
     ClinicMembershipSerializer,
     LeaveClinicSerializer,
     PublicClinicSerializer,
+    ClinicPhotoSerializer,
 )
 
 
@@ -76,17 +78,13 @@ class ClinicViewSet(viewsets.ModelViewSet):
                 {'error': 'Solo los dueños pueden asociarse.'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        active_count = ClinicMembership.objects.filter(
-            owner=user, status='active'
-        ).count()
+        active_count = ClinicMembership.objects.filter(owner=user, status='active').count()
         if active_count >= 5:
             return Response(
                 {'error': 'Ya estás asociado a 5 veterinarias.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        membership, created = ClinicMembership.objects.get_or_create(
-            owner=user, clinic=clinic
-        )
+        membership, created = ClinicMembership.objects.get_or_create(owner=user, clinic=clinic)
         if not created and membership.status == 'active':
             return Response(
                 {'error': 'Ya estás asociado a esta veterinaria.'},
@@ -107,9 +105,7 @@ class ClinicViewSet(viewsets.ModelViewSet):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         try:
-            membership = ClinicMembership.objects.get(
-                owner=user, clinic=clinic, status='active'
-            )
+            membership = ClinicMembership.objects.get(owner=user, clinic=clinic, status='active')
         except ClinicMembership.DoesNotExist:
             return Response(
                 {'error': 'No estás asociado a esta veterinaria.'},
@@ -120,10 +116,7 @@ class ClinicViewSet(viewsets.ModelViewSet):
         membership.leave_rating = serializer.validated_data['leave_rating']
         membership.left_at = timezone.now()
         membership.save()
-        return Response(
-            {'message': f'Te diste de baja de {clinic.name}.'},
-            status=status.HTTP_200_OK
-        )
+        return Response({'message': f'Te diste de baja de {clinic.name}.'})
 
 
 class MembershipViewSet(viewsets.ReadOnlyModelViewSet):
@@ -132,3 +125,50 @@ class MembershipViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         return ClinicMembership.objects.filter(owner=self.request.user)
+
+
+class ClinicPhotoViewSet(viewsets.ViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def _get_clinic(self, user):
+        try:
+            return user.clinic_profile
+        except Exception:
+            return None
+
+    @action(detail=False, methods=['post'], url_path='upload')
+    def upload(self, request):
+        clinic = self._get_clinic(request.user)
+        if not clinic:
+            return Response({'error': 'No tenés una clínica asociada.'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Máximo 5 fotos
+        if clinic.photos.count() >= 5:
+            return Response({'error': 'Ya tenés 5 fotos. Eliminá una antes de subir otra.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = ClinicPhotoSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(clinic=clinic)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['get'], url_path='list')
+    def list_photos(self, request):
+        clinic = self._get_clinic(request.user)
+        if not clinic:
+            return Response({'error': 'No tenés una clínica asociada.'}, status=status.HTTP_403_FORBIDDEN)
+        serializer = ClinicPhotoSerializer(clinic.photos.all(), many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['delete'], url_path='delete')
+    def delete_photo(self, request, pk=None):
+        clinic = self._get_clinic(request.user)
+        if not clinic:
+            return Response({'error': 'No tenés una clínica asociada.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            photo = clinic.photos.get(pk=pk)
+        except ClinicPhoto.DoesNotExist:
+            return Response({'error': 'Foto no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        photo.delete()
+        return Response({'message': 'Foto eliminada.'}, status=status.HTTP_200_OK)

@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.db.models import Avg
-from .models import Clinic, ClinicMembership
-from appointments.models import Review  # ← cambia esto
+from .models import Clinic, ClinicMembership, ClinicPhoto
+from appointments.models import Review
 
 
 class ReviewSerializer(serializers.ModelSerializer):
@@ -18,11 +18,29 @@ class ReviewSerializer(serializers.ModelSerializer):
         return value
 
 
+class ClinicPhotoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ClinicPhoto
+        fields = ['id', 'image', 'caption', 'order', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+    def validate_image(self, value):
+        # Máximo 3MB por foto
+        if value.size > 3 * 1024 * 1024:
+            raise serializers.ValidationError("La foto no puede superar los 3MB.")
+        # Solo imágenes
+        allowed = ['image/jpeg', 'image/png', 'image/webp']
+        if hasattr(value, 'content_type') and value.content_type not in allowed:
+            raise serializers.ValidationError("Solo se permiten imágenes JPG, PNG o WebP.")
+        return value
+
+
 class PublicClinicSerializer(serializers.ModelSerializer):
     rating_avg    = serializers.SerializerMethodField()
     reviews_count = serializers.SerializerMethodField()
     reviews       = serializers.SerializerMethodField()
     members_count = serializers.SerializerMethodField()
+    photos        = ClinicPhotoSerializer(many=True, read_only=True)
 
     class Meta:
         model = Clinic
@@ -31,7 +49,7 @@ class PublicClinicSerializer(serializers.ModelSerializer):
             'province', 'locality', 'phone',
             'logo', 'is_24h', 'services',
             'rating_avg', 'reviews_count', 'reviews',
-            'members_count',
+            'members_count', 'photos',
         ]
 
     def get_rating_avg(self, obj):
@@ -65,7 +83,8 @@ class ClinicSerializer(serializers.ModelSerializer):
             'members_count', 'rating_avg', 'reviews_count',
             'distance_km', 'is_member', 'created_at'
         ]
-        read_only_fields = ['id', 'slug', 'created_at', 'members_count', 'rating_avg', 'reviews_count', 'distance_km', 'is_member']
+        read_only_fields = ['id', 'slug', 'created_at', 'members_count', 'rating_avg',
+                            'reviews_count', 'distance_km', 'is_member']
 
     def get_members_count(self, obj):
         return obj.members.filter(status='active').count()
@@ -105,6 +124,5 @@ class ClinicMembershipSerializer(serializers.ModelSerializer):
 
 
 class LeaveClinicSerializer(serializers.Serializer):
-    leave_reason = serializers.CharField(required=True)
     leave_reason = serializers.CharField(required=True)
     leave_rating = serializers.IntegerField(min_value=1, max_value=5)
