@@ -89,3 +89,52 @@ class ClinicPhoto(models.Model):
 
     def __str__(self):
         return f"{self.clinic.name} — foto {self.id}"
+    
+class ClinicSchedule(models.Model):
+    DAYS = [
+        (0, 'Lunes'),
+        (1, 'Martes'),
+        (2, 'Miércoles'),
+        (3, 'Jueves'),
+        (4, 'Viernes'),
+        (5, 'Sábado'),
+        (6, 'Domingo'),
+    ]
+
+    INTERVAL_CHOICES = [
+        (0,  'Sin intervalo'),
+        (10, '10 minutos'),
+        (15, '15 minutos'),
+        (20, '20 minutos'),
+    ]
+
+    clinic = models.OneToOneField(
+        Clinic, on_delete=models.CASCADE, related_name='schedule'
+    )
+    # Días que atiende — lista de enteros ej: [0,1,2,3,4] = lunes a viernes
+    working_days = models.JSONField(default=list)
+    # Horarios por día — dict ej: {"0": {"open": "08:30", "close": "17:30"}, "5": {"open": "09:00", "close": "13:00"}}
+    day_hours = models.JSONField(default=dict)
+    # Duración en minutos por tipo de turno
+    duration_control = models.PositiveSmallIntegerField(default=30)
+    duration_vaccine  = models.PositiveSmallIntegerField(default=20)
+    duration_surgery  = models.PositiveSmallIntegerField(default=90)
+    duration_other    = models.PositiveSmallIntegerField(default=30)
+    # Intervalo entre turnos
+    interval_minutes = models.PositiveSmallIntegerField(default=10, choices=[(0,'Sin intervalo'),(10,'10 min'),(15,'15 min'),(20,'20 min')])
+    # Límite de cancelación en horas
+    cancel_limit_hours = models.PositiveSmallIntegerField(default=4)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def get_duration(self, appointment_type):
+        return {
+            'control': self.duration_control,
+            'vaccine': self.duration_vaccine,
+            'surgery': self.duration_surgery,
+            'other':   self.duration_other,
+        }.get(appointment_type, 30)
+
+    def __str__(self):
+        return f"Agenda de {self.clinic.name}"

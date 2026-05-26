@@ -271,22 +271,77 @@ class ReviewViewSet(viewsets.ModelViewSet):
         return Review.objects.none()
 
     def perform_create(self, serializer):
-        from rest_framework.exceptions import PermissionDenied, ValidationError
-        user = self.request.user
-        if not user.is_owner:
-            raise PermissionDenied('Solo los dueños pueden dejar reseñas.')
-        appt_id = self.request.data.get('appointment')
+        if not self.request.user.is_owner:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Solo los dueños pueden pedir turnos.')
+
+        clinic = serializer.validated_data.get('clinic')
+        appointment_type = serializer.validated_data.get('appointment_type', 'control')
+
+        # Si la clínica tiene agenda configurada → confirmar automáticamente
         try:
-            appt = Appointment.objects.get(id=appt_id, owner=user, status='completed')
-        except Appointment.DoesNotExist:
-            raise ValidationError('El turno no existe, no te pertenece o no está completado.')
-        if Review.objects.filter(appointment=appt).exists():
-            raise ValidationError('Ya calificaste esta visita.')
-        rating = int(self.request.data.get('rating', 0))
-        if not 1 <= rating <= 5:
-            raise ValidationError('El puntaje debe ser entre 1 y 5.')
-        serializer.save(
-            owner=user,
-            clinic=appt.clinic,
-            appointment=appt,
-        )
+            clinic.schedule
+            initial_status = 'confirmed'
+        except Exception:
+            initial_status = 'pending'
+
+        appt = serializer.save(owner=self.request.user, status=initial_status)
+
+        # Enviar mail de confirmación si se confirmó automáticamente
+        if initial_status == 'confirmed':
+            try:
+                import pytz
+                from django.core.mail import EmailMultiAlternatives
+                from django.conf import settings
+                owner = appt.owner
+                pet_name = appt.pet.name if appt.pet else 'tu mascota'
+                clinic_name = appt.clinic.name if appt.clinic else 'la clínica'
+                argentina = pytz.timezone('America/Argentina/Buenos_Aires')
+                fecha = appt.requested_date.astimezone(argentina).strftime('%A %d de %B a las %H:%M')
+                tipo = appt.get_appointment_type_display()
+
+                html = f"""
+                <!DOCTYPE html>
+                <html>
+                <body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,sans-serif;">
+                <table width="100%" cellpadding="0" cellspacing="0">
+                    <tr><td align="center" style="padding:40px 0;">
+                    <table width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+                    <tr><td align="center" style="background:#0f1923;padding:28px 40px;">
+                        <div style="color:#4CAF50;font-size:28px;font-weight:bold;">🐾 VetPaw</div>
+                        <div style="color:#aaa;font-size:13px;margin-top:4px;">Tu app veterinaria de confianza</div>
+                    </td></tr>
+                    <tr><td style="padding:32px 40px;">
+                        <p style="font-size:18px;font-weight:bold;color:#1e1b4b;margin:0 0 12px;">¡Turno confirmado! ✅</p>
+                        <p style="font-size:15px;color:#4b5563;line-height:1.6;margin:0 0 20px;">
+                            Hola <strong>{owner.first_name or owner.username}</strong>, tu turno fue confirmado automáticamente.
+                        </p>
+                        <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:16px 20px;margin-bottom:20px;">
+                            <p style="margin:0;font-size:15px;color:#166534;">📅 <strong>{fecha.capitalize()}</strong></p>
+                            <p style="margin:6px 0 0;font-size:13px;color:#166534;">🏥 {clinic_name}</p>
+                            <p style="margin:4px 0 0;font-size:13px;color:#166534;">🐾 Paciente: {pet_name}</p>
+                            <p style="margin:4px 0 0;font-size:13px;color:#166534;">🩺 Tipo: {tipo}</p>
+                        </div>
+                        <p style="font-size:13px;color:#9ca3af;text-align:center;">
+                            Si necesitás cancelar, ingresá a <a href="https://www.vetpaw.com.ar" style="color:#4CAF50;">vetpaw.com.ar</a>
+                        </p>
+                    </td></tr>
+                    <tr><td align="center" style="background:#f9fafb;padding:16px 40px;border-top:1px solid #e5e7eb;">
+                        <p style="font-size:12px;color:#9ca3af;margin:0;">© 2026 VetPaw · Todos los derechos reservados 🐾</p>
+                    </td></tr>
+                    </table>
+                    </td></tr>
+                </table>
+                </body></html>
+                """
+
+                msg = EmailMultiAlternatives(
+                    subject=f'✅ Turno confirmado — {pet_name} en {clinic_name}',
+                    body=f'Tu turno para {pet_name} en {clinic_name} fue confirmado para el {fecha}.',
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    to=[owner.email],
+                )
+                msg.attach_alternative(html, 'text/html')
+                msg.send()
+            except Exception as e:
+                print(f'Error enviando mail de confirmación automática: {e}')

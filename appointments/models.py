@@ -5,8 +5,6 @@ from clinics.models import Clinic
 
 
 class Visit(models.Model):
-    """Visita cargada por el veterinario despues de la consulta"""
-
     pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name='visits')
     clinic = models.ForeignKey(Clinic, on_delete=models.SET_NULL, null=True, related_name='visits')
     date = models.DateTimeField()
@@ -15,10 +13,9 @@ class Visit(models.Model):
     treatment = models.TextField(blank=True)
     observations = models.TextField(blank=True)
     next_visit = models.DateField(null=True, blank=True)
-    # Datos del veterinario que atendió
     vet_first_name = models.CharField(max_length=100)
     vet_last_name = models.CharField(max_length=100)
-    vet_license = models.CharField(max_length=50)  # matrícula
+    vet_license = models.CharField(max_length=50)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -29,8 +26,6 @@ class Visit(models.Model):
 
 
 class Appointment(models.Model):
-    """Turno solicitado por el dueño de la mascota"""
-
     STATUS_CHOICES = [
         ('pending', 'Pendiente'),
         ('confirmed', 'Confirmado'),
@@ -39,12 +34,22 @@ class Appointment(models.Model):
         ('no_show', 'Ausente'),
     ]
 
-    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='appointments')
-    pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name='appointments')
+    TYPE_CHOICES = [
+        ('control', 'Control general'),
+        ('vaccine', 'Vacunación'),
+        ('surgery', 'Cirugía'),
+        ('other', 'Otro'),
+    ]
+
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='appointments', null=True, blank=True)
+    pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name='appointments', null=True, blank=True)
     clinic = models.ForeignKey(Clinic, on_delete=models.CASCADE, related_name='appointments')
     requested_date = models.DateTimeField()
-    reason = models.CharField(max_length=255)
-    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='pending')
+    reason = models.CharField(max_length=255, blank=True)
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='confirmed')
+    appointment_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='control')
+    is_external = models.BooleanField(default=False)  # turno cargado manualmente por la clínica
+    external_label = models.CharField(max_length=100, blank=True)  # ej: "Turno por teléfono - Juan"
     vet_notes = models.TextField(blank=True)
     seen_by_owner = models.BooleanField(default=True)
     reminder_sent = models.BooleanField(default=False)
@@ -55,25 +60,20 @@ class Appointment(models.Model):
         ordering = ['-requested_date']
 
     def __str__(self):
-        return f"{self.pet.name} @ {self.clinic.name} — {self.requested_date}"
-    
+        return f"{self.pet.name if self.pet else 'Externo'} @ {self.clinic.name} — {self.requested_date}"
+
+
 class Review(models.Model):
     appointment = models.OneToOneField(
-        Appointment,
-        on_delete=models.CASCADE,
-        related_name='review'
+        Appointment, on_delete=models.CASCADE, related_name='review'
     )
     owner = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        related_name='reviews'
+        User, on_delete=models.CASCADE, related_name='reviews'
     )
     clinic = models.ForeignKey(
-        'clinics.Clinic',
-        on_delete=models.CASCADE,
-        related_name='reviews'
+        'clinics.Clinic', on_delete=models.CASCADE, related_name='reviews'
     )
-    rating = models.PositiveSmallIntegerField()  # 1 a 5
+    rating = models.PositiveSmallIntegerField()
     comment = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -18,18 +18,28 @@ class VisitSerializer(serializers.ModelSerializer):
 
 
 class AppointmentSerializer(serializers.ModelSerializer):
-    pet_name   = serializers.CharField(source='pet.name',          read_only=True)
-    clinic_name = serializers.CharField(source='clinic.name',      read_only=True)
-    owner_name  = serializers.CharField(source='owner.get_full_name', read_only=True)
+    pet_name        = serializers.CharField(source='pet.name',             read_only=True)
+    clinic_name     = serializers.CharField(source='clinic.name',          read_only=True)
+    owner_name      = serializers.CharField(source='owner.get_full_name',  read_only=True)
+    owner_phone     = serializers.CharField(source='owner.phone',          read_only=True)
+    appointment_type_display = serializers.CharField(source='get_appointment_type_display', read_only=True)
 
     class Meta:
         model  = Appointment
         fields = [
-            'id', 'owner', 'owner_name', 'pet', 'pet_name',
-            'clinic', 'clinic_name', 'requested_date', 'reason',
-            'status', 'vet_notes', 'seen_by_owner', 'created_at', 'updated_at'
+            'id', 'owner', 'owner_name', 'owner_phone',
+            'pet', 'pet_name', 'clinic', 'clinic_name',
+            'requested_date', 'reason', 'status',
+            'appointment_type', 'appointment_type_display',
+            'is_external', 'external_label',
+            'vet_notes', 'seen_by_owner', 'reminder_sent',
+            'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'owner', 'status', 'seen_by_owner', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'owner', 'status', 'seen_by_owner',
+            'reminder_sent', 'created_at', 'updated_at',
+            'appointment_type_display',
+        ]
 
 
 class ReviewSerializer(serializers.ModelSerializer):
