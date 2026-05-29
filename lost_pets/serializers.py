@@ -11,6 +11,7 @@ class LostPetSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'photo', 'photo_url', 'description',
             'contact_type', 'contact_value', 'report_type',
+            'province', 'locality',
             'report_count', 'expires_at', 'days_left', 'created_at'
         ]
         extra_kwargs = {'photo': {'write_only': True}}

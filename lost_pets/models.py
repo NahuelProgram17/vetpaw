@@ -24,6 +24,8 @@ class LostPet(models.Model):
     contact_type = models.CharField(max_length=20, choices=CONTACT_CHOICES)
     contact_value = models.CharField(max_length=150)
     report_type = models.CharField(max_length=10, choices=REPORT_TYPE_CHOICES, default='found')
+    province = models.CharField(max_length=100, blank=True, default='')
+    locality = models.CharField(max_length=100, blank=True, default='')
     report_count = models.PositiveIntegerField(default=0)
     expires_at = models.DateTimeField(default=expiry_default)
     created_at = models.DateTimeField(auto_now_add=True)

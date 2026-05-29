@@ -13,9 +13,17 @@ from .serializers import LostPetSerializer
 @permission_classes([AllowAny])
 def list_lost_pets(request):
     pets = LostPet.objects.filter(expires_at__gt=timezone.now())
+    
+    province = request.query_params.get('province')
+    locality = request.query_params.get('locality')
+    
+    if province:
+        pets = pets.filter(province__icontains=province)
+    if locality:
+        pets = pets.filter(locality__icontains=locality)
+    
     serializer = LostPetSerializer(pets, many=True)
     return Response(serializer.data)
-
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
