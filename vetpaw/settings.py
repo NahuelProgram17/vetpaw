@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'messaging',
     'lost_pets',
     'contact',
+    'django_ratelimit',
 ]
 
 MIDDLEWARE = [
