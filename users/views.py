@@ -10,8 +10,6 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
-from django_ratelimit.decorators import ratelimit
-from django.utils.decorators import method_decorator
 
 
 
@@ -115,10 +113,6 @@ class ProfileView(generics.RetrieveUpdateAPIView):
     def get_object(self):
         return self.request.user
     
-@method_decorator(
-    ratelimit(key='ip', rate='5/15m', method='POST', block=True),
-    name='dispatch'
-)    
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
     

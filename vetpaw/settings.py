@@ -41,7 +41,6 @@ INSTALLED_APPS = [
     'messaging',
     'lost_pets',
     'contact',
-    'django_ratelimit',
 ]
 
 MIDDLEWARE = [
@@ -153,9 +152,3 @@ EMAIL_HOST_USER = 'resend'
 EMAIL_HOST_PASSWORD = env('RESEND_API_KEY')
 DEFAULT_FROM_EMAIL = 'VetPaw <onboarding@resend.dev>'
 
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
-        'LOCATION': 'cache_table',
-    }
-}
