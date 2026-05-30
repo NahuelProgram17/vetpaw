@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'messaging',
     'lost_pets',
     'contact',
+    'axes',
 ]
 
 MIDDLEWARE = [
@@ -53,6 +54,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'axes.middleware.AxesMiddleware', 
 ]
 
 ROOT_URLCONF = 'vetpaw.urls'
@@ -152,3 +154,12 @@ EMAIL_HOST_USER = 'resend'
 EMAIL_HOST_PASSWORD = env('RESEND_API_KEY')
 DEFAULT_FROM_EMAIL = 'VetPaw <onboarding@resend.dev>'
 
+AUTHENTICATION_BACKENDS = [
+    'axes.backends.AxesStandaloneBackend',
+    'django.contrib.auth.backends.ModelBackend',
+]
+# ── django-axes ──
+AXES_FAILURE_LIMIT = 5          # bloquea después de 5 intentos fallidos
+AXES_COOLOFF_TIME = 0.25        # bloqueo de 15 minutos (0.25 horas)
+AXES_LOCKOUT_CALLABLE = None
+AXES_RESET_ON_SUCCESS = True    # resetea el contador si el login es exitoso
