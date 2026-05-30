@@ -155,6 +155,7 @@ DEFAULT_FROM_EMAIL = 'VetPaw <onboarding@resend.dev>'
 
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'LOCATION': 'cache_table',
     }
 }
