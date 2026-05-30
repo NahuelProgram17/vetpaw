@@ -5,6 +5,8 @@ from .views import (
     CustomTokenObtainPairView, ResendVerificationEmailView,
     RegisterClinicView, PasswordResetRequestView, PasswordResetConfirmView
 )
+from .admin_panel_views import admin_panel
+
 
 urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
@@ -16,4 +18,5 @@ urlpatterns = [
     path('resend-verification/', ResendVerificationEmailView.as_view(), name='resend-verification'),
     path('password-reset/', PasswordResetRequestView.as_view(), name='password-reset'),
     path('password-reset-confirm/<str:uidb64>/<str:token>/', PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
+    path('admin-panel/', admin_panel, name='admin-panel'),
 ]
