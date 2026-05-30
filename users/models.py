@@ -6,6 +6,7 @@ import uuid
 class User(AbstractUser):
     latitude  = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
+    email = models.EmailField(unique=True)
 
     ROLE_CHOICES = [
         ('owner', 'Dueño de mascota'),
