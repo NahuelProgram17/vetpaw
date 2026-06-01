@@ -178,7 +178,7 @@ class Command(BaseCommand):
                 subject=f'📊 VetPaw — Resumen semanal {fecha_inicio} al {fecha_fin}',
                 message=f'Resumen semanal VetPaw: {total_owners} duenos, {total_clinics} clinicas, {total_appts_week} turnos esta semana.',
                 from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=['vetpaw.app@gmail.com'],
+                recipient_list=['nahuelpedreyra2017@gmail.com'],
                 html_message=html,
                 fail_silently=False,
             )
