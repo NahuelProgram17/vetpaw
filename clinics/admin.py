@@ -1,6 +1,5 @@
 from django.contrib import admin
-from django.contrib import admin
-from .models import Clinic, ClinicMembership
+from .models import Clinic, ClinicMembership, ClinicPetAccess
 
 @admin.register(Clinic)
 class ClinicAdmin(admin.ModelAdmin):
@@ -9,3 +8,7 @@ class ClinicAdmin(admin.ModelAdmin):
 @admin.register(ClinicMembership)
 class ClinicMembershipAdmin(admin.ModelAdmin):
     list_display = ['owner', 'clinic', 'status', 'joined_at']
+
+@admin.register(ClinicPetAccess)
+class ClinicPetAccessAdmin(admin.ModelAdmin):
+    list_display = ['clinic', 'pet', 'last_appointment', 'granted_at']
