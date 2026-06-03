@@ -1,5 +1,4 @@
 from rest_framework import serializers
-from .models import Pet, Vaccine
 from .models import Pet, Vaccine, ClinicalPhoto
 
 class VaccineSerializer(serializers.ModelSerializer):
