@@ -247,6 +247,12 @@ class ClinicPhotoViewSet(viewsets.ViewSet):
             return Response({'error': 'No tenés una clínica asociada.'}, status=status.HTTP_403_FORBIDDEN)
         if clinic.photos.count() >= 5:
             return Response({'error': 'Ya tenés 5 fotos. Eliminá una antes de subir otra.'}, status=status.HTTP_400_BAD_REQUEST)
+        image = request.FILES.get('image')
+        if image:
+            if image.size > 3 * 1024 * 1024:
+                return Response({'error': 'La imagen no puede superar los 3MB.'}, status=status.HTTP_400_BAD_REQUEST)
+            if image.content_type not in ['image/jpeg', 'image/png', 'image/webp']:
+                return Response({'error': 'Solo se permiten imágenes JPG, PNG o WebP.'}, status=status.HTTP_400_BAD_REQUEST)
         serializer = ClinicPhotoSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save(clinic=clinic)
