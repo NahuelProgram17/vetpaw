@@ -1,6 +1,7 @@
 from django.db import models
 from users.models import User
 from clinics.models import Clinic
+from cloudinary.models import CloudinaryField
 
 
 class Pet(models.Model):
@@ -20,7 +21,7 @@ class Pet(models.Model):
         ('male', 'Macho'),
         ('female', 'Hembra'),
     ]
-    
+
     FEEDING_CHOICES = [
         ('balanced', 'Balanceada'),
         ('homemade', 'Casera'),
@@ -98,4 +99,25 @@ class Vaccine(models.Model):
 
     def __str__(self):
         return f"{self.name} — {self.pet.name}"
-    
+
+
+class ClinicalPhoto(models.Model):
+    pet = models.ForeignKey(
+        Pet,
+        on_delete=models.CASCADE,
+        related_name='clinical_photos'
+    )
+    clinic = models.ForeignKey(
+        Clinic,
+        on_delete=models.CASCADE,
+        related_name='clinical_photos'
+    )
+    image = CloudinaryField('image')
+    caption = models.CharField(max_length=255, blank=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-uploaded_at']
+
+    def __str__(self):
+        return f"Foto de {self.pet.name} — {self.clinic.name}"
