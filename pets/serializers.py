@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Pet, Vaccine, ClinicalPhoto
 
+
 class VaccineSerializer(serializers.ModelSerializer):
     clinic_name = serializers.CharField(source='clinic.name', read_only=True)
 
@@ -11,6 +12,7 @@ class VaccineSerializer(serializers.ModelSerializer):
             'date_applied', 'next_dose', 'batch', 'notes',
             'vet_first_name', 'vet_last_name', 'vet_license', 'vet_clinic_name',
         ]
+
 
 class PetSerializer(serializers.ModelSerializer):
     vaccines = VaccineSerializer(many=True, read_only=True)
@@ -46,11 +48,11 @@ class PetSerializer(serializers.ModelSerializer):
             'owner', 'owner_name', 'owner_phone', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'owner', 'created_at', 'updated_at']
-        
-        
-    class ClinicalPhotoSerializer(serializers.ModelSerializer):
-        image_url = serializers.SerializerMethodField()
-        clinic_name = serializers.CharField(source='clinic.name', read_only=True)
+
+
+class ClinicalPhotoSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+    clinic_name = serializers.CharField(source='clinic.name', read_only=True)
 
     def get_image_url(self, obj):
         if obj.image:
