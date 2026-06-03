@@ -19,11 +19,15 @@ class PetViewSet(viewsets.ModelViewSet):
         elif user.is_clinic:
             try:
                 clinic = user.clinic_profile
-                owner_ids = ClinicMembership.objects.filter(
+                from clinics.models import ClinicPetAccess
+                from django.utils import timezone
+                from datetime import timedelta
+                cutoff = timezone.now() - timedelta(days=270)
+                pet_ids = ClinicPetAccess.objects.filter(
                     clinic=clinic,
-                    status='active'
-                ).values_list('owner_id', flat=True)
-                return Pet.objects.filter(owner_id__in=owner_ids)
+                    last_appointment__gte=cutoff
+                ).values_list('pet_id', flat=True)
+                return Pet.objects.filter(id__in=pet_ids)
             except Exception:
                 return Pet.objects.none()
         return Pet.objects.none()
@@ -69,7 +73,15 @@ class VaccineViewSet(viewsets.ModelViewSet):
         if user.is_clinic:
             try:
                 clinic = user.clinic_profile
-                return Vaccine.objects.filter(clinic=clinic)
+                from clinics.models import ClinicPetAccess
+                from django.utils import timezone
+                from datetime import timedelta
+                cutoff = timezone.now() - timedelta(days=270)
+                pet_ids = ClinicPetAccess.objects.filter(
+                    clinic=clinic,
+                    last_appointment__gte=cutoff
+                ).values_list('pet_id', flat=True)
+                return Vaccine.objects.filter(pet_id__in=pet_ids)
             except Exception:
                 return Vaccine.objects.none()
         return Vaccine.objects.filter(pet__owner=user)

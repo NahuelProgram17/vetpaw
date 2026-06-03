@@ -91,6 +91,7 @@ class Vaccine(models.Model):
     vet_first_name = models.CharField(max_length=100, blank=True)
     vet_last_name = models.CharField(max_length=100, blank=True)
     vet_license = models.CharField(max_length=50, blank=True)
+    vet_clinic_name = models.CharField(max_length=255, blank=True)
 
     class Meta:
         ordering = ['-date_applied']

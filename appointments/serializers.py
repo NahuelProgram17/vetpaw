@@ -12,7 +12,7 @@ class VisitSerializer(serializers.ModelSerializer):
             'id', 'pet', 'pet_name', 'clinic', 'clinic_name',
             'date', 'reason', 'diagnosis', 'treatment', 'observations',
             'next_visit', 'vet_first_name', 'vet_last_name', 'vet_license',
-            'created_at'
+            'vet_clinic_name','created_at'
         ]
         read_only_fields = ['id', 'created_at']
 

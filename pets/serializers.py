@@ -10,7 +10,7 @@ class VaccineSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'pet', 'clinic', 'clinic_name', 'name',
             'date_applied', 'next_dose', 'batch', 'notes',
-            'vet_first_name', 'vet_last_name', 'vet_license',
+            'vet_first_name', 'vet_last_name', 'vet_license', 'vet_clinic_name',
         ]
 
 class PetSerializer(serializers.ModelSerializer):

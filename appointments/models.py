@@ -16,6 +16,7 @@ class Visit(models.Model):
     vet_first_name = models.CharField(max_length=100)
     vet_last_name = models.CharField(max_length=100)
     vet_license = models.CharField(max_length=50)
+    vet_clinic_name = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -53,6 +54,7 @@ class Appointment(models.Model):
     vet_notes = models.TextField(blank=True)
     seen_by_owner = models.BooleanField(default=True)
     reminder_sent = models.BooleanField(default=False)
+    consent_shown = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

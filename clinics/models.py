@@ -138,3 +138,30 @@ class ClinicSchedule(models.Model):
 
     def __str__(self):
         return f"Agenda de {self.clinic.name}"
+    
+class ClinicPetAccess(models.Model):
+    clinic = models.ForeignKey(
+        Clinic,
+        on_delete=models.CASCADE,
+        related_name='pet_accesses'
+    )
+    pet = models.ForeignKey(
+        'pets.Pet',
+        on_delete=models.CASCADE,
+        related_name='clinic_accesses'
+    )
+    last_appointment = models.DateTimeField()
+    granted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('clinic', 'pet')
+
+    @property
+    def is_active(self):
+        from django.utils import timezone
+        from datetime import timedelta
+        return (timezone.now() - self.last_appointment) < timedelta(days=270)
+
+    def __str__(self):
+        status = 'activo' if self.is_active else 'expirado'
+        return f"{self.clinic.name} → {self.pet.name} ({status})"

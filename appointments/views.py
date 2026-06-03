@@ -69,6 +69,14 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         appointment.status = 'confirmed'
         appointment.seen_by_owner = False
         appointment.save()
+        if appointment.pet:
+            from clinics.models import ClinicPetAccess
+            from django.utils import timezone
+            ClinicPetAccess.objects.update_or_create(
+                clinic=appointment.clinic,
+                pet=appointment.pet,
+                defaults={'last_appointment': timezone.now()}
+            )
     
     # Enviar mail al dueño
         try:
