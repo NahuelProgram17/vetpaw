@@ -210,6 +210,20 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             seen_by_owner=False
         ).update(seen_by_owner=True)
         return Response({'message': 'Notificaciones marcadas como vistas.'})
+    
+    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def mark_seen_clinic(self, request):
+        if not request.user.is_clinic:
+            return Response({'error': 'Solo las clínicas pueden usar este endpoint.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            clinic = request.user.clinic_profile
+        except Exception:
+            return Response({'error': 'No tenés una clínica asociada.'}, status=status.HTTP_403_FORBIDDEN)
+        Appointment.objects.filter(
+            clinic=clinic,
+            seen_by_clinic=False
+        ).update(seen_by_clinic=True)
+        return Response({'message': 'Notificaciones de clínica marcadas como vistas.'})
 
     @action(detail=True, methods=['patch'], permission_classes=[permissions.IsAuthenticated])
     def mark_no_show(self, request, pk=None):
@@ -293,7 +307,7 @@ class ReviewViewSet(viewsets.ModelViewSet):
         except Exception:
             initial_status = 'pending'
 
-        appt = serializer.save(owner=self.request.user, status=initial_status)
+        appt = serializer.save(owner=self.request.user, status=initial_status, seen_by_clinic=False)
 
         # Enviar mail de confirmación si se confirmó automáticamente
         if initial_status == 'confirmed':

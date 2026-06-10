@@ -53,6 +53,7 @@ class Appointment(models.Model):
     external_label = models.CharField(max_length=100, blank=True)  # ej: "Turno por teléfono - Juan"
     vet_notes = models.TextField(blank=True)
     seen_by_owner = models.BooleanField(default=True)
+    seen_by_clinic = models.BooleanField(default=True)
     reminder_sent = models.BooleanField(default=False)
     consent_shown = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
