@@ -10,7 +10,7 @@ from .serializers import LostPetSerializer
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([AllowAny])
 def list_lost_pets(request):
     pets = LostPet.objects.filter(expires_at__gt=timezone.now())
     
@@ -26,7 +26,7 @@ def list_lost_pets(request):
     return Response(serializer.data)
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 @parser_classes([MultiPartParser, FormParser])
 def create_lost_pet(request):
     serializer = LostPetSerializer(data=request.data)

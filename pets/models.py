@@ -1,7 +1,6 @@
 from django.db import models
 from users.models import User
 from clinics.models import Clinic
-from cloudinary.models import CloudinaryField
 
 
 class Pet(models.Model):
@@ -21,7 +20,7 @@ class Pet(models.Model):
         ('male', 'Macho'),
         ('female', 'Hembra'),
     ]
-
+    
     FEEDING_CHOICES = [
         ('balanced', 'Balanceada'),
         ('homemade', 'Casera'),
@@ -93,31 +92,24 @@ class Vaccine(models.Model):
     vet_last_name = models.CharField(max_length=100, blank=True)
     vet_license = models.CharField(max_length=50, blank=True)
     vet_clinic_name = models.CharField(max_length=255, blank=True)
+    reminder_sent = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['-date_applied']
 
     def __str__(self):
         return f"{self.name} — {self.pet.name}"
-
-
+    
+    
 class ClinicalPhoto(models.Model):
-    pet = models.ForeignKey(
-        Pet,
-        on_delete=models.CASCADE,
-        related_name='clinical_photos'
-    )
-    clinic = models.ForeignKey(
-        Clinic,
-        on_delete=models.CASCADE,
-        related_name='clinical_photos'
-    )
-    image = CloudinaryField('image')
-    caption = models.CharField(max_length=255, blank=True)
+    pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name='clinical_photos')
+    clinic = models.ForeignKey('clinics.Clinic', on_delete=models.SET_NULL, null=True, blank=True, related_name='clinical_photos')
+    image = models.ImageField(upload_to='clinical_photos/')
+    caption = models.CharField(max_length=200, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-uploaded_at']
 
     def __str__(self):
-        return f"Foto de {self.pet.name} — {self.clinic.name}"
+        return f"{self.pet.name} — {self.caption or 'foto clínica'}"

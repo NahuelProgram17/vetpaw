@@ -150,6 +150,7 @@ class Command(BaseCommand):
             next_dose__isnull=False,
             next_dose__gte=now,
             next_dose__lte=window_end,
+            reminder_sent=False,
         ).select_related('pet', 'pet__owner', 'clinic')
 
         for vaccine in vaccines:
@@ -249,6 +250,8 @@ class Command(BaseCommand):
                     html_message=html,
                     fail_silently=False,
                 )
+                vaccine.reminder_sent = True
+                vaccine.save(update_fields=['reminder_sent'])
                 self.stdout.write(self.style.SUCCESS(f"  💉 Vacuna [{vaccine.id}] → {owner.email} (vence {fecha_venc})"))
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f"  ✗ Error vacuna [{vaccine.id}]: {e}"))
@@ -326,7 +329,7 @@ class Command(BaseCommand):
             <span class="badge-label">mensaje{'s' if count > 1 else ''} sin leer</span>
         </div>
         <div class="btn-wrap">
-            <a href="https://vetpaw-frontend.vercel.app/messages" class="btn">Ver mensajes en VetPaw →</a>
+            <a href="https://www.vetpaw.com.ar/messages" class="btn">Ver mensajes en VetPaw →</a>
         </div>
         <p class="msg" style="font-size:12px; color:#aaa; text-align:center;">
             Este es un aviso automático. El contenido de los mensajes solo está disponible dentro de VetPaw.
