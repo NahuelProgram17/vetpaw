@@ -89,6 +89,7 @@ class RegisterView(generics.CreateAPIView):
     def perform_create(self, serializer):
         user = serializer.save()
         user.email_verified = True
+        user.is_approved = True
         user.save()
 
 
@@ -101,9 +102,9 @@ class VerifyEmailView(APIView):
             if not user.email_verified:
                 user.email_verified = True
                 user.save()
-            return redirect('https://vetpaw-frontend.vercel.app/login?verified=true')
+            return redirect('https://www.vetpaw.com.ar/login?verified=true')
         except User.DoesNotExist:
-            return redirect('https://vetpaw-frontend.vercel.app/login?verified=false')
+            return redirect('https://www.vetpaw.com.ar/login?verified=false')
 
 
 class ProfileView(generics.RetrieveUpdateAPIView):
