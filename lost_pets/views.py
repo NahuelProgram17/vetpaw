@@ -31,7 +31,7 @@ def list_lost_pets(request):
 def create_lost_pet(request):
     serializer = LostPetSerializer(data=request.data)
     if serializer.is_valid():
-        serializer.save()
+        serializer.save(owner=request.user)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
