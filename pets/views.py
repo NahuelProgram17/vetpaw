@@ -3,8 +3,8 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from django.http import FileResponse
-from .models import Pet, Vaccine, ClinicalPhoto
-from .serializers import PetSerializer, VaccineSerializer, ClinicalPhotoSerializer
+from .models import Pet, Vaccine, ClinicalPhoto, Treatment
+from .serializers import PetSerializer, VaccineSerializer, ClinicalPhotoSerializer, TreatmentSerializer
 from clinics.models import ClinicMembership
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
@@ -154,3 +154,39 @@ class ClinicalPhotoViewSet(viewsets.ViewSet):
             return Response({'error': 'Foto no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
         photo.delete()
         return Response({'message': 'Foto eliminada.'}, status=status.HTTP_200_OK)
+
+class TreatmentViewSet(viewsets.ModelViewSet):
+    serializer_class = TreatmentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_owner:
+            return Treatment.objects.filter(pet__owner=user)
+        if user.is_clinic:
+            try:
+                clinic = user.clinic_profile
+                from clinics.models import ClinicPetAccess
+                from django.utils import timezone
+                from datetime import timedelta
+                cutoff = timezone.now() - timedelta(days=270)
+                pet_ids = ClinicPetAccess.objects.filter(
+                    clinic=clinic,
+                    last_appointment__gte=cutoff
+                ).values_list('pet_id', flat=True)
+                return Treatment.objects.filter(pet_id__in=pet_ids)
+            except Exception:
+                return Treatment.objects.none()
+        return Treatment.objects.none()
+
+    def perform_create(self, serializer):
+        pet = serializer.validated_data.get('pet')
+        if not self.request.user.is_owner or pet.owner_id != self.request.user.id:
+            raise PermissionDenied('Solo el dueño puede cargar tratamientos de su mascota.')
+        serializer.save()
+
+    def perform_update(self, serializer):
+        pet = serializer.validated_data.get('pet', serializer.instance.pet)
+        if not self.request.user.is_owner or pet.owner_id != self.request.user.id:
+            raise PermissionDenied('Solo el dueño puede editar tratamientos de su mascota.')
+        serializer.save()

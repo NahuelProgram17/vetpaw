@@ -1,5 +1,20 @@
 from rest_framework import serializers
-from .models import Pet, Vaccine, ClinicalPhoto
+from .models import Pet, Vaccine, ClinicalPhoto, Treatment
+
+
+class TreatmentSerializer(serializers.ModelSerializer):
+    treatment_type_display = serializers.CharField(
+        source='get_treatment_type_display',
+        read_only=True
+    )
+
+    class Meta:
+        model = Treatment
+        fields = [
+            'id', 'pet', 'treatment_type', 'treatment_type_display',
+            'date_applied', 'product', 'notes', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
 
 
 class VaccineSerializer(serializers.ModelSerializer):
@@ -16,6 +31,7 @@ class VaccineSerializer(serializers.ModelSerializer):
 
 class PetSerializer(serializers.ModelSerializer):
     vaccines = VaccineSerializer(many=True, read_only=True)
+    treatments = TreatmentSerializer(many=True, read_only=True)
     owner_name = serializers.CharField(
         source='owner.get_full_name',
         read_only=True
@@ -43,7 +59,7 @@ class PetSerializer(serializers.ModelSerializer):
             'id', 'name', 'species', 'species_display',
             'breed', 'sex', 'birth_date', 'weight',
             'color', 'microchip', 'photo', 'allergies',
-            'notes', 'is_neutered', 'vaccines',
+            'notes', 'is_neutered', 'vaccines', 'treatments',
             'feeding', 'habitat', 'lives_with_animals',
             'owner', 'owner_name', 'owner_phone', 'created_at', 'updated_at'
         ]

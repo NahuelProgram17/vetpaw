@@ -113,3 +113,27 @@ class ClinicalPhoto(models.Model):
 
     def __str__(self):
         return f"{self.pet.name} — {self.caption or 'foto clínica'}"
+
+
+class Treatment(models.Model):
+    TREATMENT_TYPES = [
+        ('deworming', 'Desparasitación'),
+        ('flea', 'Pastilla antipulgas'),
+        ('pipette', 'Pipeta'),
+    ]
+    pet = models.ForeignKey(
+        Pet,
+        on_delete=models.CASCADE,
+        related_name='treatments'
+    )
+    treatment_type = models.CharField(max_length=20, choices=TREATMENT_TYPES)
+    date_applied = models.DateField()
+    product = models.CharField(max_length=120, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date_applied']
+
+    def __str__(self):
+        return f"{self.get_treatment_type_display()} — {self.pet.name} ({self.date_applied})"
