@@ -2,7 +2,7 @@ from rest_framework import viewsets, permissions
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-from django.db.models import Q
+from django.db.models import Q, F
 from django.utils import timezone
 from .models import Advertiser
 from .serializers import AdvertiserSerializer
@@ -30,3 +30,15 @@ def active_ads(request):
     qs = qs.filter(Q(end_date__isnull=True) | Q(end_date__gte=today))
     data = AdvertiserSerializer(qs, many=True, context={'request': request}).data
     return Response(data)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def register_click(request, pk):
+    # Suma 1 click de forma atómica. Si el anuncio no existe o algo falla,
+    # respondemos OK igual para no romper la experiencia del usuario.
+    try:
+        updated = Advertiser.objects.filter(pk=pk).update(clicks=F('clicks') + 1)
+        return Response({'ok': bool(updated)})
+    except Exception:
+        return Response({'ok': False})
