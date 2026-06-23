@@ -16,4 +16,5 @@ urlpatterns = [
     path('api/', include('lost_pets.urls')),
     path('api/', include('contact.urls')),
     path('api/', include('ads.urls')),
+    path('api/', include('blog.urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

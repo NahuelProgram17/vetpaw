@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'lost_pets',
     'contact',
     'ads',
+    'blog',
     'axes',
 ]
 
