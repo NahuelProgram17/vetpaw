@@ -33,9 +33,18 @@ class Pet(models.Model):
         ('field', 'Campo'),
     ]
 
+    TEMPERAMENT_CHOICES = [
+        ('friendly', 'Amigable'),
+        ('shy', 'Tímido'),
+        ('nervous', 'Nervioso'),
+        ('protective', 'Protector'),
+        ('playful', 'Juguetón'),
+    ]
+
     feeding = models.CharField(max_length=20, choices=FEEDING_CHOICES, blank=True)
     habitat = models.CharField(max_length=20, choices=HABITAT_CHOICES, blank=True)
     lives_with_animals = models.BooleanField(default=False)
+    temperament = models.CharField(max_length=20, choices=TEMPERAMENT_CHOICES, blank=True, default='')
 
     owner = models.ForeignKey(
         User,
@@ -128,6 +137,7 @@ class Treatment(models.Model):
     )
     treatment_type = models.CharField(max_length=20, choices=TREATMENT_TYPES)
     date_applied = models.DateField()
+    next_dose = models.DateField(null=True, blank=True)
     product = models.CharField(max_length=120, blank=True)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
