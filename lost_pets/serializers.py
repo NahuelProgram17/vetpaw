@@ -7,6 +7,7 @@ class LostPetSerializer(serializers.ModelSerializer):
     photo_url = serializers.SerializerMethodField()
     owner = serializers.PrimaryKeyRelatedField(read_only=True)
     owner_name = serializers.SerializerMethodField()
+    species_display = serializers.CharField(source='get_species_display', read_only=True)
 
     class Meta:
         model = LostPet
@@ -14,6 +15,7 @@ class LostPetSerializer(serializers.ModelSerializer):
             'id', 'photo', 'photo_url', 'description',
             'contact_type', 'contact_value', 'report_type',
             'province', 'locality', 'owner', 'owner_name',
+            'pet_name', 'species', 'species_display', 'breed', 'incident_date',
             'report_count', 'expires_at', 'days_left', 'created_at'
         ]
         extra_kwargs = {'photo': {'write_only': True}}
