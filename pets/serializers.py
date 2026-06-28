@@ -12,7 +12,7 @@ class TreatmentSerializer(serializers.ModelSerializer):
         model = Treatment
         fields = [
             'id', 'pet', 'treatment_type', 'treatment_type_display',
-            'date_applied', 'product', 'notes', 'created_at'
+            'date_applied', 'next_dose', 'product', 'notes', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']
 
@@ -41,6 +41,10 @@ class PetSerializer(serializers.ModelSerializer):
         source='get_species_display',
         read_only=True
     )
+    temperament_display = serializers.CharField(
+        source='get_temperament_display',
+        read_only=True
+    )
     photo = serializers.SerializerMethodField()
 
     def get_photo(self, obj):
@@ -61,6 +65,7 @@ class PetSerializer(serializers.ModelSerializer):
             'color', 'microchip', 'photo', 'allergies',
             'notes', 'is_neutered', 'vaccines', 'treatments',
             'feeding', 'habitat', 'lives_with_animals',
+            'temperament', 'temperament_display',
             'owner', 'owner_name', 'owner_phone', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'owner', 'created_at', 'updated_at']
@@ -78,4 +83,4 @@ class ClinicalPhotoSerializer(serializers.ModelSerializer):
     class Meta:
         model = ClinicalPhoto
         fields = ['id', 'pet', 'clinic', 'clinic_name', 'image', 'image_url', 'caption', 'uploaded_at']
-        read_only_fields = ['id', 'clinic', 'uploaded_at']
+        read_only_fields = ['id', 'clinic', 'uploaded_at']
