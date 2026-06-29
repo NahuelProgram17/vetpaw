@@ -1,6 +1,5 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
-import uuid
 
 
 class User(AbstractUser):
@@ -28,19 +27,18 @@ class User(AbstractUser):
     )
     bio = models.TextField(blank=True)
     GENDER_CHOICES = [
-    ('male', 'Masculino'),
-    ('female', 'Femenino'),
-    ('other', 'Prefiero no decir'),
-]
+        ('male', 'Masculino'),
+        ('female', 'Femenino'),
+        ('other', 'Prefiero no decir'),
+    ]
     gender = models.CharField(
-    max_length=10,
-    choices=GENDER_CHOICES,
-    default='other',
-    blank=True
-)
+        max_length=10,
+        choices=GENDER_CHOICES,
+        default='other',
+        blank=True
+    )
     created_at = models.DateTimeField(auto_now_add=True)
-    email_verified = models.BooleanField(default=False)
-    email_verification_token = models.UUIDField(default=uuid.uuid4, editable=False)
+    is_approved = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.username} ({self.role})"
@@ -52,5 +50,3 @@ class User(AbstractUser):
     @property
     def is_clinic(self):
         return self.role == 'clinic'
-    
-    is_approved = models.BooleanField(default=False)

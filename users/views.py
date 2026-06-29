@@ -3,7 +3,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.core.mail import EmailMultiAlternatives
 from django.conf import settings
-from django.shortcuts import redirect
 from .models import User
 from .serializers import RegisterSerializer, UserSerializer, CustomTokenObtainPairSerializer, RegisterClinicSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -12,99 +11,16 @@ from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
 
 
-
-
-def send_verification_email(user):
-    token = user.email_verification_token
-    verify_url = f"https://web-production-eaeb4.up.railway.app/api/users/verify-email/{token}/"
-
-    html_content = f"""
-    <!DOCTYPE html>
-    <html>
-    <body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,sans-serif;">
-    <table width="100%" cellpadding="0" cellspacing="0">
-        <tr>
-        <td align="center" style="padding:40px 0;">
-            <table width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
-            <!-- Header -->
-            <tr>
-                <td align="center" style="background:#4f46e5;padding:32px 40px;">
-                <div style="font-size:36px;">🐾</div>
-                <div style="color:#ffffff;font-size:26px;font-weight:bold;margin-top:8px;">VetPaw</div>
-                <div style="color:#c7d2fe;font-size:13px;margin-top:4px;">Tu app veterinaria de confianza</div>
-                </td>
-            </tr>
-            <!-- Body -->
-            <tr>
-                <td style="padding:36px 40px;">
-                <p style="font-size:18px;font-weight:bold;color:#1e1b4b;margin:0 0 12px;">¡Hola, {user.username}! 👋</p>
-                <p style="font-size:15px;color:#4b5563;line-height:1.6;margin:0 0 28px;">
-                    Gracias por registrarte en <strong>VetPaw</strong>. Para activar tu cuenta y empezar a cuidar a tus mascotas, verificá tu email haciendo clic en el botón:
-                </p>
-                <table width="100%" cellpadding="0" cellspacing="0">
-                    <tr>
-                    <td align="center">
-                        <a href="{verify_url}" style="display:inline-block;background:#4f46e5;color:#ffffff;font-size:16px;font-weight:bold;padding:14px 36px;border-radius:8px;text-decoration:none;">
-                        ✅ Verificar mi cuenta
-                        </a>
-                    </td>
-                    </tr>
-                </table>
-                <p style="font-size:13px;color:#9ca3af;margin:28px 0 0;text-align:center;">
-                    Si no creaste una cuenta en VetPaw, ignorá este mensaje.
-                </p>
-                </td>
-            </tr>
-            <!-- Footer -->
-            <tr>
-                <td align="center" style="background:#f9fafb;padding:20px 40px;border-top:1px solid #e5e7eb;">
-                <p style="font-size:12px;color:#9ca3af;margin:0;">© 2025 VetPaw · Todos los derechos reservados 🐾</p>
-                </td>
-            </tr>
-            </table>
-        </td>
-        </tr>
-    </table>
-    </body>
-    </html>
-    """
-
-    text_content = f"Hola {user.username}! Verificá tu cuenta en VetPaw: {verify_url}"
-
-    email = EmailMultiAlternatives(
-        subject='Verificá tu cuenta en VetPaw 🐾',
-        body=text_content,
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        to=[user.email],
-    )
-    email.attach_alternative(html_content, "text/html")
-    email.send()
-
-
 class RegisterView(generics.CreateAPIView):
+    """Registro de DUEÑO de mascota. Cuenta activa al instante."""
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
 
     def perform_create(self, serializer):
         user = serializer.save()
-        user.email_verified = True
-        user.is_approved = True
+        user.is_approved = True  # Dueños se auto-aprueban
         user.save()
-
-
-class VerifyEmailView(APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def get(self, request, token):
-        try:
-            user = User.objects.get(email_verification_token=token)
-            if not user.email_verified:
-                user.email_verified = True
-                user.save()
-            return redirect('https://www.vetpaw.com.ar/login?verified=true')
-        except User.DoesNotExist:
-            return redirect('https://www.vetpaw.com.ar/login?verified=false')
 
 
 class ProfileView(generics.RetrieveUpdateAPIView):
@@ -113,28 +29,14 @@ class ProfileView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
-    
+
+
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
-    
-class ResendVerificationEmailView(APIView):
-    permission_classes = [permissions.AllowAny]
 
-    def post(self, request):
-        email = request.data.get('email')
-        if not email:
-            return Response({'error': 'El email es requerido.'}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            user = User.objects.get(email=email)
-            if user.email_verified:
-                return Response({'message': 'Este email ya fue verificado. Podés iniciar sesión.'}, status=status.HTTP_200_OK)
-            send_verification_email(user)
-            return Response({'message': 'Email de verificación reenviado. Revisá tu casilla.'}, status=status.HTTP_200_OK)
-        except User.DoesNotExist:
-            return Response({'message': 'Si el email existe, recibirás el link en breve.'}, status=status.HTTP_200_OK)
-        
-        
+
 class RegisterClinicView(generics.CreateAPIView):
+    """Registro de VETERINARIA. Cuenta queda PENDIENTE de aprobación del admin."""
     queryset = User.objects.all()
     serializer_class = RegisterClinicSerializer
     permission_classes = [permissions.AllowAny]
@@ -144,12 +46,14 @@ class RegisterClinicView(generics.CreateAPIView):
         from django.db import transaction
         with transaction.atomic():
             user = serializer.save()
-            user.email_verified = True
+            # Clínica queda pendiente de aprobación (is_approved=False por defecto)
             user.save()
             clinic_data = getattr(user, '_clinic_data', {})
             Clinic.objects.create(owner=user, **clinic_data)
 
+
 class PasswordResetRequestView(APIView):
+    """Envía link por mail para recuperar contraseña."""
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
@@ -239,3 +143,35 @@ class PasswordResetConfirmView(APIView):
         user.set_password(password)
         user.save()
         return Response({'message': 'Contraseña restablecida correctamente.'})
+
+
+class ApproveClinicView(APIView):
+    """Endpoint para que el admin apruebe una clínica pendiente."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, user_id):
+        if request.user.username != 'jaime17':
+            return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            user = User.objects.get(pk=user_id, role='clinic')
+        except User.DoesNotExist:
+            return Response({'error': 'Clínica no encontrada.'}, status=404)
+        user.is_approved = True
+        user.save()
+        return Response({'message': f'Clínica {user.username} aprobada correctamente.', 'user_id': user.id})
+
+
+class RejectClinicView(APIView):
+    """Endpoint para que el admin rechace (elimine) una clínica pendiente."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, user_id):
+        if request.user.username != 'jaime17':
+            return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            user = User.objects.get(pk=user_id, role='clinic', is_approved=False)
+        except User.DoesNotExist:
+            return Response({'error': 'Clínica no encontrada o ya aprobada.'}, status=404)
+        username = user.username
+        user.delete()
+        return Response({'message': f'Solicitud de {username} rechazada y eliminada.'})

@@ -43,14 +43,21 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
             'role', 'gender', 'phone', 'province', 'locality', 'avatar', 'bio',
-            'created_at', 'email_verified', 'is_approved',
+            'created_at', 'is_approved',
         ]
-        read_only_fields = ['id', 'created_at', 'email_verified', 'is_approved']
+        read_only_fields = ['id', 'created_at', 'is_approved']
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
+        # Bloqueo de login para clínicas pendientes de aprobación
+        user = self.user
+        if user.role == 'clinic' and not user.is_approved:
+            raise serializers.ValidationError({
+                'detail': 'Tu clínica todavía está pendiente de aprobación. '
+                          'Te avisaremos por mail cuando esté lista.'
+            })
         return data
 
 
@@ -110,5 +117,3 @@ class RegisterClinicSerializer(serializers.ModelSerializer):
         user = User.objects.create_user(**validated_data)
         user._clinic_data = clinic_data
         return user
-
-    

@@ -126,6 +126,23 @@ def admin_panel(request):
     except Exception:
         security_data = []
 
+    # ── Veterinarias pendientes de aprobación ──
+    pending_clinics_qs = User.objects.filter(role='clinic', is_approved=False).order_by('-date_joined')
+    pending_clinics_data = []
+    for u in pending_clinics_qs:
+        clinic = Clinic.objects.filter(owner=u).first()
+        pending_clinics_data.append({
+            'user_id':       u.id,
+            'username':      u.username,
+            'email':         u.email,
+            'date_joined':   u.date_joined.strftime('%d/%m/%Y %H:%M'),
+            'clinic_name':   clinic.name if clinic else '—',
+            'clinic_phone':  clinic.phone if clinic else '',
+            'clinic_address': clinic.address if clinic else '',
+            'clinic_province': clinic.province if clinic else '',
+            'clinic_locality': clinic.locality if clinic else '',
+        })
+
     return Response({
         'global': {
             'total_owners':      total_owners,
@@ -143,4 +160,5 @@ def admin_panel(request):
         'top_clinics':       clinics_data,
         'last_users':        last_users_data,
         'security':          security_data,
-    })
+        'pending_clinics':   pending_clinics_data,
+    })
