@@ -154,7 +154,7 @@ EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'resend'
 EMAIL_HOST_PASSWORD = env('RESEND_API_KEY')
-DEFAULT_FROM_EMAIL = 'VetPaw <onboarding@resend.dev>'
+DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='VetPaw <hola@vetpaw.com.ar>')
 
 AUTHENTICATION_BACKENDS = [
     'axes.backends.AxesStandaloneBackend',
