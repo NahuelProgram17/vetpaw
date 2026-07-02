@@ -39,7 +39,11 @@ class PetViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         if not self.request.user.is_owner:
             raise PermissionDenied('Solo los dueños pueden registrar mascotas.')
-        serializer.save(owner=self.request.user)
+        new_photo = self.request.FILES.get('photo')
+        if new_photo:
+            serializer.save(owner=self.request.user, photo=new_photo)
+        else:
+            serializer.save(owner=self.request.user)
 
     def perform_update(self, serializer):
         new_photo = self.request.FILES.get('photo')

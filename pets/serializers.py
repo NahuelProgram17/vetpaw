@@ -48,9 +48,13 @@ class PetSerializer(serializers.ModelSerializer):
     photo = serializers.SerializerMethodField()
 
     def get_photo(self, obj):
-        if obj.photo:
-            return obj.photo.url
-        return None
+        if not obj.photo:
+            return None
+        url = obj.photo.url
+        request = self.context.get('request')
+        if request and url.startswith('/'):
+            return request.build_absolute_uri(url)
+        return url
 
     def get_owner_phone(self, obj):
         if obj.owner:
@@ -83,4 +87,4 @@ class ClinicalPhotoSerializer(serializers.ModelSerializer):
     class Meta:
         model = ClinicalPhoto
         fields = ['id', 'pet', 'clinic', 'clinic_name', 'image', 'image_url', 'caption', 'uploaded_at']
-        read_only_fields = ['id', 'clinic', 'uploaded_at']
+        read_only_fields = ['id', 'clinic', 'uploaded_at']

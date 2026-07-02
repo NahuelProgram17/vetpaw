@@ -39,6 +39,9 @@ class Pet(models.Model):
         ('nervous', 'Nervioso'),
         ('protective', 'Protector'),
         ('playful', 'Juguetón'),
+        ('sleepy', 'Dormilón'),
+        ('eater', 'Comilón'),
+        ('intimidating', 'Intimidante'),
     ]
 
     feeding = models.CharField(max_length=20, choices=FEEDING_CHOICES, blank=True)
