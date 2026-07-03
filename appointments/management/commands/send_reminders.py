@@ -16,32 +16,48 @@ class Command(BaseCommand):
         self.send_unread_message_reminders()
 
     def send_appointment_reminders(self):
+        """
+        Envía un recordatorio a los dueños por los turnos próximos.
+
+        Antes se buscaban turnos exactamente a 24/48 hs con una ventana de 30 minutos.
+        Eso podía dejar afuera turnos creados con menos de 24 hs de anticipación,
+        como el caso de Karen Matus y Gusano para mañana a las 09:40.
+
+        Ahora se toma cualquier turno pendiente/confirmado entre este momento y las
+        próximas 24 horas, siempre que todavía no tenga reminder_sent=True.
+        """
         now = timezone.now()
+        window_end = now + timedelta(hours=24)
 
-        for hours in [24, 48]:
-            window_start = now + timedelta(hours=hours) - timedelta(minutes=30)
-            window_end   = now + timedelta(hours=hours) + timedelta(minutes=30)
+        appointments = Appointment.objects.filter(
+            requested_date__gte=now,
+            requested_date__lte=window_end,
+            status__in=['pending', 'confirmed'],
+            reminder_sent=False,
+            owner__isnull=False,
+            pet__isnull=False,
+        ).select_related('owner', 'pet', 'clinic').order_by('requested_date')
 
-            appointments = Appointment.objects.filter(
-                requested_date__gte=window_start,
-                requested_date__lte=window_end,
-                status__in=['pending', 'confirmed'],
-                reminder_sent=False,
-            ).select_related('owner', 'pet', 'clinic')
+        for appt in appointments:
+            owner = appt.owner
+            if not owner.email:
+                continue
 
-            for appt in appointments:
-                owner = appt.owner
-                if not owner.email:
-                    continue
+            hours_left = (appt.requested_date - now).total_seconds() / 3600
+            if hours_left <= 2:
+                label = "en menos de 2 horas"
+            elif hours_left <= 12:
+                label = "hoy"
+            else:
+                label = "mañana"
 
-                label = "mañana" if hours == 24 else "en 2 días"
-                fecha = appt.requested_date.astimezone(
-                    timezone.get_current_timezone()
-                ).strftime("%d/%m/%Y a las %H:%M")
-                status_label = "Confirmado ✅" if appt.status == "confirmed" else "Pendiente ⏳"
-                subject = f"🐾 Recordatorio: turno de {appt.pet.name} {label}"
+            fecha = appt.requested_date.astimezone(
+                timezone.get_current_timezone()
+            ).strftime("%d/%m/%Y a las %H:%M")
+            status_label = "Confirmado ✅" if appt.status == "confirmed" else "Pendiente ⏳"
+            subject = f"🐾 Recordatorio: turno de {appt.pet.name} {label}"
 
-                html = f"""
+            html = f"""
 <!DOCTYPE html>
 <html>
 <head>
@@ -76,10 +92,15 @@ class Command(BaseCommand):
         <p class="greeting">Hola, {owner.first_name or owner.username}!</p>
         <p class="msg">
             Te recordamos que tenés un turno veterinario programado <strong>{label}</strong>.
-            Asegurate de llegar a tiempo y llevar toda la documentacion de tu mascota.
+            Asegurate de llegar a tiempo y llevar toda la documentación de tu mascota.
         </p>
         <div class="card">
             <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                    <td class="card-label">Dueño/a</td>
+                    <td class="card-value">{owner.get_full_name() or owner.username}</td>
+                </tr>
+                <tr><td colspan="2" style="padding:4px 0;"></td></tr>
                 <tr>
                     <td class="card-label">Mascota</td>
                     <td class="card-value">🐾 {appt.pet.name}</td>
@@ -97,7 +118,7 @@ class Command(BaseCommand):
                 <tr><td colspan="2" style="padding:4px 0;"></td></tr>
                 <tr>
                     <td class="card-label">Motivo</td>
-                    <td class="card-value">{appt.reason or 'Consulta general'}</td>
+                    <td class="card-value">{appt.appointment_type_display if hasattr(appt, 'appointment_type_display') else appt.get_appointment_type_display()}</td>
                 </tr>
                 <tr><td colspan="2" style="padding:4px 0;"></td></tr>
                 <tr>
@@ -111,8 +132,7 @@ class Command(BaseCommand):
             </table>
         </div>
         <div class="tip">
-            💡 <strong>Recordá:</strong> Si necesitás cancelar, hacelo con al menos
-            <strong>24 horas de anticipación</strong> desde la app para evitar inconvenientes.
+            💡 <strong>Recordá:</strong> Si necesitás cancelar, hacelo con anticipación desde VetPaw para evitar inconvenientes.
         </div>
         <p class="msg" style="font-size:13px; color:#888;">
             Si ya no tenés este turno o creés que este email es un error, podés ignorarlo.
@@ -127,20 +147,20 @@ class Command(BaseCommand):
 </html>
 """
 
-                try:
-                    send_mail(
-                        subject=subject,
-                        message=f"Recordatorio: turno de {appt.pet.name} {label} — {fecha} en {appt.clinic.name}",
-                        from_email=settings.DEFAULT_FROM_EMAIL,
-                        recipient_list=[owner.email],
-                        html_message=html,
-                        fail_silently=False,
-                    )
-                    appt.reminder_sent = True
-                    appt.save(update_fields=['reminder_sent'])
-                    self.stdout.write(self.style.SUCCESS(f"  ✅ Turno [{appt.id}] → {owner.email} ({hours}hs)"))
-                except Exception as e:
-                    self.stdout.write(self.style.ERROR(f"  ✗ Error turno [{appt.id}]: {e}"))
+            try:
+                send_mail(
+                    subject=subject,
+                    message=f"Recordatorio: turno de {appt.pet.name} {label} — {fecha} en {appt.clinic.name}",
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[owner.email],
+                    html_message=html,
+                    fail_silently=False,
+                )
+                appt.reminder_sent = True
+                appt.save(update_fields=['reminder_sent'])
+                self.stdout.write(self.style.SUCCESS(f"  ✅ Turno [{appt.id}] → {owner.email} ({label})"))
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f"  ✗ Error turno [{appt.id}]: {e}"))
 
     def send_vaccine_reminders(self):
         now = timezone.now().date()

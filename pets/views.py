@@ -24,14 +24,28 @@ class PetViewSet(viewsets.ModelViewSet):
             try:
                 clinic = user.clinic_profile
                 from clinics.models import ClinicPetAccess
+                from appointments.models import Appointment
                 from django.utils import timezone
                 from datetime import timedelta
+
+                # Pacientes visibles para la clínica:
+                # 1) accesos ya concedidos por turnos/visitas
+                # 2) mascotas que tienen o tuvieron turno con esta clínica
+                #    aunque el turno sea futuro y todavía no haya historia clínica.
                 cutoff = timezone.now() - timedelta(days=270)
-                pet_ids = ClinicPetAccess.objects.filter(
+                access_pet_ids = ClinicPetAccess.objects.filter(
                     clinic=clinic,
                     last_appointment__gte=cutoff
                 ).values_list('pet_id', flat=True)
-                return Pet.objects.filter(id__in=pet_ids)
+
+                appointment_pet_ids = Appointment.objects.filter(
+                    clinic=clinic,
+                    pet__isnull=False,
+                ).exclude(status='cancelled').values_list('pet_id', flat=True)
+
+                return Pet.objects.filter(
+                    id__in=list(access_pet_ids) + list(appointment_pet_ids)
+                ).distinct()
             except Exception:
                 return Pet.objects.none()
         return Pet.objects.none()

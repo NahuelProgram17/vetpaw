@@ -56,7 +56,18 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         if not self.request.user.is_owner:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('Solo los dueños pueden pedir turnos.')
-        serializer.save(owner=self.request.user)
+        appointment = serializer.save(owner=self.request.user)
+
+        # Desde que un dueño pide un turno, la clínica ya puede ver
+        # al paciente en su panel, aunque el turno sea futuro.
+        if appointment.pet and appointment.clinic:
+            from clinics.models import ClinicPetAccess
+            from django.utils import timezone
+            ClinicPetAccess.objects.update_or_create(
+                clinic=appointment.clinic,
+                pet=appointment.pet,
+                defaults={'last_appointment': appointment.requested_date or timezone.now()}
+            )
 
     @action(detail=True, methods=['patch'], permission_classes=[permissions.IsAuthenticated])
     def confirm(self, request, pk=None):
