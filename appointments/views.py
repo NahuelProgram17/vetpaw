@@ -7,6 +7,7 @@ from .serializers import VisitSerializer, AppointmentSerializer
 from .models import Visit, Appointment, Review
 from .serializers import VisitSerializer, AppointmentSerializer, ReviewSerializer
 from django.db.models import Avg
+from pets.models import Pet
 
 
 class VisitViewSet(viewsets.ModelViewSet):
@@ -68,6 +69,51 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 pet=appointment.pet,
                 defaults={'last_appointment': appointment.requested_date or timezone.now()}
             )
+
+    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='program_control')
+    def program_control(self, request):
+        if not request.user.is_clinic:
+            return Response({'error': 'Solo las clínicas pueden programar controles.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            clinic = request.user.clinic_profile
+        except Exception:
+            return Response({'error': 'No tenés una clínica asociada.'}, status=status.HTTP_403_FORBIDDEN)
+
+        pet_id = request.data.get('pet')
+        requested_date = request.data.get('requested_date')
+        appointment_type = request.data.get('appointment_type', 'control')
+        reason = request.data.get('reason', '') or 'Control programado'
+
+        if not pet_id or not requested_date:
+            return Response({'error': 'Paciente y fecha/hora son obligatorios.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            pet = Pet.objects.get(pk=pet_id)
+        except Pet.DoesNotExist:
+            return Response({'error': 'Paciente no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        appointment = Appointment.objects.create(
+            owner=pet.owner,
+            pet=pet,
+            clinic=clinic,
+            requested_date=requested_date,
+            reason=reason,
+            appointment_type=appointment_type,
+            status='confirmed',
+            is_external=False,
+            seen_by_owner=False,
+            seen_by_clinic=True,
+        )
+
+        from clinics.models import ClinicPetAccess
+        ClinicPetAccess.objects.update_or_create(
+            clinic=clinic,
+            pet=pet,
+            defaults={'last_appointment': appointment.requested_date}
+        )
+
+        serializer = self.get_serializer(appointment)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['patch'], permission_classes=[permissions.IsAuthenticated])
     def confirm(self, request, pk=None):

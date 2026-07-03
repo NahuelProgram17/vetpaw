@@ -120,7 +120,7 @@ class ClinicalPhotoViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['post'], url_path='upload')
     def upload(self, request):
         if not request.user.is_clinic:
-            raise PermissionDenied('Solo las clínicas pueden subir fotos clínicas.')
+            raise PermissionDenied('Solo las clínicas pueden subir archivos clínicos.')
         try:
             clinic = request.user.clinic_profile
         except Exception:
@@ -132,18 +132,19 @@ class ClinicalPhotoViewSet(viewsets.ViewSet):
 
         image = request.FILES.get('image')
         if not image:
-            return Response({'error': 'El campo image es obligatorio.'}, status=status.HTTP_400_BAD_REQUEST)
-        if image.size > 5 * 1024 * 1024:
-            return Response({'error': 'La imagen no puede superar los 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
-        if image.content_type not in ['image/jpeg', 'image/png', 'image/webp']:
-            return Response({'error': 'Solo se permiten imágenes JPG, PNG o WebP.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'El archivo es obligatorio.'}, status=status.HTTP_400_BAD_REQUEST)
+        if image.size > 10 * 1024 * 1024:
+            return Response({'error': 'El archivo no puede superar los 10MB.'}, status=status.HTTP_400_BAD_REQUEST)
+        allowed_types = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+        if image.content_type not in allowed_types:
+            return Response({'error': 'Solo se permiten imágenes JPG, PNG, WebP o archivos PDF.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             pet = Pet.objects.get(pk=pet_id)
         except Pet.DoesNotExist:
             return Response({'error': 'Mascota no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
 
-        serializer = ClinicalPhotoSerializer(data=request.data)
+        serializer = ClinicalPhotoSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             serializer.save(clinic=clinic, pet=pet)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -155,7 +156,7 @@ class ClinicalPhotoViewSet(viewsets.ViewSet):
         if not pet_id:
             return Response({'error': 'El parámetro pet es obligatorio.'}, status=status.HTTP_400_BAD_REQUEST)
         photos = ClinicalPhoto.objects.filter(pet_id=pet_id)
-        serializer = ClinicalPhotoSerializer(photos, many=True)
+        serializer = ClinicalPhotoSerializer(photos, many=True, context={'request': request})
         return Response(serializer.data)
 
     @action(detail=True, methods=['delete'], url_path='delete')
@@ -169,9 +170,9 @@ class ClinicalPhotoViewSet(viewsets.ViewSet):
         try:
             photo = ClinicalPhoto.objects.get(pk=pk, clinic=clinic)
         except ClinicalPhoto.DoesNotExist:
-            return Response({'error': 'Foto no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'Archivo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         photo.delete()
-        return Response({'message': 'Foto eliminada.'}, status=status.HTTP_200_OK)
+        return Response({'message': 'Archivo eliminado.'}, status=status.HTTP_200_OK)
 
 class TreatmentViewSet(viewsets.ModelViewSet):
     serializer_class = TreatmentSerializer

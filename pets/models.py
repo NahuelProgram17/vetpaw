@@ -116,15 +116,26 @@ class Vaccine(models.Model):
 class ClinicalPhoto(models.Model):
     pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name='clinical_photos')
     clinic = models.ForeignKey('clinics.Clinic', on_delete=models.SET_NULL, null=True, blank=True, related_name='clinical_photos')
-    image = models.ImageField(upload_to='clinical_photos/')
+    # Se mantiene el nombre del campo `image` para no romper la API existente,
+    # pero ahora permite imágenes y documentos PDF.
+    image = models.FileField(upload_to='clinical_files/')
     caption = models.CharField(max_length=200, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-uploaded_at']
 
+    @property
+    def is_pdf(self):
+        return bool(self.image and self.image.name.lower().endswith('.pdf'))
+
+    @property
+    def file_type(self):
+        return 'pdf' if self.is_pdf else 'image'
+
     def __str__(self):
-        return f"{self.pet.name} — {self.caption or 'foto clínica'}"
+        tipo = 'PDF clínico' if self.is_pdf else 'foto clínica'
+        return f"{self.pet.name} — {self.caption or tipo}"
 
 
 class Treatment(models.Model):
