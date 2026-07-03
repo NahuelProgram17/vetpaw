@@ -14,6 +14,26 @@ from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 
 
+def _sniff_image_content_type(data, filename=""):
+    """Detecta imágenes aunque Cloudinary/archivo no conserve extensión."""
+    name = (filename or "").lower()
+    guessed = mimetypes.guess_type(name)[0]
+    if guessed and guessed.startswith('image/'):
+        return guessed, name
+
+    head = data[:32] if data else b''
+    if head.startswith(b'\xff\xd8\xff'):
+        return 'image/jpeg', name if name.endswith(('.jpg', '.jpeg')) else f'{name or "imagen-clinica"}.jpg'
+    if head.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'image/png', name if name.endswith('.png') else f'{name or "imagen-clinica"}.png'
+    if head.startswith(b'RIFF') and b'WEBP' in head[:16]:
+        return 'image/webp', name if name.endswith('.webp') else f'{name or "imagen-clinica"}.webp'
+    if head.startswith((b'GIF87a', b'GIF89a')):
+        return 'image/gif', name if name.endswith('.gif') else f'{name or "imagen-clinica"}.gif'
+
+    return guessed or 'application/octet-stream', name or 'archivo-clinico'
+
+
 class PetViewSet(viewsets.ModelViewSet):
     serializer_class = PetSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -211,16 +231,22 @@ class ClinicalPhotoViewSet(viewsets.ViewSet):
             response['X-Content-Type-Options'] = 'nosniff'
             return response
 
-        filename = os.path.basename(photo.image.name or 'archivo-clinico')
-        content_type = 'application/pdf' if photo.is_pdf else (mimetypes.guess_type(filename)[0] or 'application/octet-stream')
+        filename = os.path.basename(photo.image.name or photo.caption or 'imagen-clinica')
         try:
             file_handle = photo.image.open('rb')
+            file_bytes = file_handle.read()
+            try:
+                file_handle.close()
+            except Exception:
+                pass
         except Exception:
             return Response({'error': 'No se pudo abrir el archivo clínico.'}, status=status.HTTP_404_NOT_FOUND)
 
-        response = FileResponse(file_handle, content_type=content_type)
-        disposition = 'inline' if photo.is_pdf or content_type.startswith('image/') else 'attachment'
-        response['Content-Disposition'] = f'{disposition}; filename="{filename}"'
+        content_type, safe_filename = _sniff_image_content_type(file_bytes, filename)
+        response = HttpResponse(file_bytes, content_type=content_type)
+        disposition = 'inline' if content_type.startswith('image/') else 'attachment'
+        response['Content-Disposition'] = f'{disposition}; filename="{safe_filename}"'
+        response['X-Content-Type-Options'] = 'nosniff'
         return response
 
     @action(detail=True, methods=['delete'], url_path='delete')
