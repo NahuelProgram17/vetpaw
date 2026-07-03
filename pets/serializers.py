@@ -84,7 +84,16 @@ class ClinicalPhotoSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     content_type = serializers.SerializerMethodField()
 
+    def _download_url(self, obj):
+        request = self.context.get('request')
+        path = f'/api/clinical-photos/{obj.id}/download/'
+        return request.build_absolute_uri(path) if request else path
+
     def get_image_url(self, obj):
+        # Para PDFs guardados en base, nunca devolvemos URL de Cloudinary.
+        # Chrome/Cloudinary puede responder 401 si la cuenta no permite entrega pública de PDFs.
+        if obj.is_pdf:
+            return None
         if not obj.image:
             return None
         url = obj.image.url
@@ -97,11 +106,13 @@ class ClinicalPhotoSerializer(serializers.ModelSerializer):
         return obj.file_type
 
     def get_file_url(self, obj):
+        if obj.is_pdf:
+            return self._download_url(obj)
         return self.get_image_url(obj)
 
     def get_content_type(self, obj):
         if obj.is_pdf:
-            return 'application/pdf'
+            return obj.pdf_content_type or 'application/pdf'
         name = (obj.image.name or '').lower() if obj.image else ''
         if name.endswith('.png'):
             return 'image/png'
@@ -115,6 +126,8 @@ class ClinicalPhotoSerializer(serializers.ModelSerializer):
         return obj.is_pdf
 
     def get_filename(self, obj):
+        if obj.is_pdf and obj.pdf_filename:
+            return obj.pdf_filename
         if not obj.image:
             return ''
         return obj.image.name.split('/')[-1]

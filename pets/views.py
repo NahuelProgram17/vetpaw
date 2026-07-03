@@ -4,7 +4,7 @@ from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
-from django.http import FileResponse
+from django.http import FileResponse, HttpResponse
 from .models import Pet, Vaccine, ClinicalPhoto, Treatment
 from .serializers import PetSerializer, VaccineSerializer, ClinicalPhotoSerializer, TreatmentSerializer
 from clinics.models import ClinicMembership
@@ -149,11 +149,31 @@ class ClinicalPhotoViewSet(viewsets.ViewSet):
         except Pet.DoesNotExist:
             return Response({'error': 'Mascota no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
 
-        serializer = ClinicalPhotoSerializer(data=request.data, context={'request': request})
-        if serializer.is_valid():
-            serializer.save(clinic=clinic, pet=pet)
+        caption = request.data.get('caption', '')
+        is_pdf_upload = content_type == 'application/pdf' or filename.endswith('.pdf')
+
+        if is_pdf_upload:
+            # No mandamos PDFs a Cloudinary: muchas cuentas responden 401 al abrir raw PDF.
+            # Lo guardamos en la base y lo servimos desde la API autenticada.
+            clinical_file = ClinicalPhoto.objects.create(
+                clinic=clinic,
+                pet=pet,
+                caption=caption,
+                pdf_file=image.read(),
+                pdf_filename=image.name or 'archivo-clinico.pdf',
+                pdf_content_type='application/pdf',
+            )
+            serializer = ClinicalPhotoSerializer(clinical_file, context={'request': request})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        clinical_file = ClinicalPhoto.objects.create(
+            clinic=clinic,
+            pet=pet,
+            caption=caption,
+            image=image,
+        )
+        serializer = ClinicalPhotoSerializer(clinical_file, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['get'], url_path='list')
     def list_photos(self, request):
@@ -182,6 +202,14 @@ class ClinicalPhotoViewSet(viewsets.ViewSet):
             allowed = True
         if not allowed:
             raise PermissionDenied('No tenés permiso para ver este archivo clínico.')
+
+        if photo.pdf_file:
+            filename = os.path.basename(photo.pdf_filename or 'archivo-clinico.pdf')
+            content_type = photo.pdf_content_type or 'application/pdf'
+            response = HttpResponse(bytes(photo.pdf_file), content_type=content_type)
+            response['Content-Disposition'] = f'inline; filename="{filename}"'
+            response['X-Content-Type-Options'] = 'nosniff'
+            return response
 
         filename = os.path.basename(photo.image.name or 'archivo-clinico')
         content_type = 'application/pdf' if photo.is_pdf else (mimetypes.guess_type(filename)[0] or 'application/octet-stream')

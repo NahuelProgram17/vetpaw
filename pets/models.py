@@ -117,9 +117,16 @@ class Vaccine(models.Model):
 class ClinicalPhoto(models.Model):
     pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name='clinical_photos')
     clinic = models.ForeignKey('clinics.Clinic', on_delete=models.SET_NULL, null=True, blank=True, related_name='clinical_photos')
-    # Se mantiene el nombre del campo `image` para no romper la API existente,
-    # pero ahora permite imágenes y documentos PDF.
-    image = models.FileField(upload_to='clinical_files/', storage=ClinicalFileCloudinaryStorage())
+    # Se mantiene el nombre del campo `image` para no romper la API existente.
+    # Las imágenes siguen yendo a Cloudinary.
+    image = models.FileField(upload_to='clinical_files/', storage=ClinicalFileCloudinaryStorage(), blank=True, null=True)
+
+    # Los PDF se guardan en la base de datos para evitar el error 401 de Cloudinary
+    # cuando la cuenta no tiene habilitada la entrega pública de PDF/ZIP.
+    pdf_file = models.BinaryField(null=True, blank=True)
+    pdf_filename = models.CharField(max_length=255, blank=True)
+    pdf_content_type = models.CharField(max_length=100, blank=True, default='application/pdf')
+
     caption = models.CharField(max_length=200, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
@@ -128,6 +135,8 @@ class ClinicalPhoto(models.Model):
 
     @property
     def is_pdf(self):
+        if self.pdf_file:
+            return True
         return bool(self.image and self.image.name.lower().endswith('.pdf'))
 
     @property
