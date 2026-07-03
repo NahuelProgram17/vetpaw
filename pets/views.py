@@ -1,3 +1,5 @@
+import os
+import mimetypes
 from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
@@ -135,8 +137,11 @@ class ClinicalPhotoViewSet(viewsets.ViewSet):
             return Response({'error': 'El archivo es obligatorio.'}, status=status.HTTP_400_BAD_REQUEST)
         if image.size > 10 * 1024 * 1024:
             return Response({'error': 'El archivo no puede superar los 10MB.'}, status=status.HTTP_400_BAD_REQUEST)
+        filename = (image.name or '').lower()
+        content_type = (image.content_type or '').lower()
         allowed_types = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
-        if image.content_type not in allowed_types:
+        allowed_exts = ('.jpg', '.jpeg', '.png', '.webp', '.pdf')
+        if content_type not in allowed_types and not filename.endswith(allowed_exts):
             return Response({'error': 'Solo se permiten imágenes JPG, PNG, WebP o archivos PDF.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
@@ -158,6 +163,37 @@ class ClinicalPhotoViewSet(viewsets.ViewSet):
         photos = ClinicalPhoto.objects.filter(pet_id=pet_id)
         serializer = ClinicalPhotoSerializer(photos, many=True, context={'request': request})
         return Response(serializer.data)
+
+
+    @action(detail=True, methods=['get'], url_path='download')
+    def download_file(self, request, pk=None):
+        try:
+            photo = ClinicalPhoto.objects.select_related('pet__owner', 'clinic').get(pk=pk)
+        except ClinicalPhoto.DoesNotExist:
+            return Response({'error': 'Archivo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        allowed = False
+        if getattr(request.user, 'is_clinic', False):
+            try:
+                allowed = photo.clinic_id == request.user.clinic_profile.id
+            except Exception:
+                allowed = False
+        if photo.pet.owner_id == request.user.id:
+            allowed = True
+        if not allowed:
+            raise PermissionDenied('No tenés permiso para ver este archivo clínico.')
+
+        filename = os.path.basename(photo.image.name or 'archivo-clinico')
+        content_type = 'application/pdf' if photo.is_pdf else (mimetypes.guess_type(filename)[0] or 'application/octet-stream')
+        try:
+            file_handle = photo.image.open('rb')
+        except Exception:
+            return Response({'error': 'No se pudo abrir el archivo clínico.'}, status=status.HTTP_404_NOT_FOUND)
+
+        response = FileResponse(file_handle, content_type=content_type)
+        disposition = 'inline' if photo.is_pdf or content_type.startswith('image/') else 'attachment'
+        response['Content-Disposition'] = f'{disposition}; filename="{filename}"'
+        return response
 
     @action(detail=True, methods=['delete'], url_path='delete')
     def delete_photo(self, request, pk=None):

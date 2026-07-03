@@ -1,6 +1,7 @@
 from django.db import models
 from users.models import User
 from clinics.models import Clinic
+from .storage import ClinicalFileCloudinaryStorage
 
 
 class Pet(models.Model):
@@ -118,7 +119,7 @@ class ClinicalPhoto(models.Model):
     clinic = models.ForeignKey('clinics.Clinic', on_delete=models.SET_NULL, null=True, blank=True, related_name='clinical_photos')
     # Se mantiene el nombre del campo `image` para no romper la API existente,
     # pero ahora permite imágenes y documentos PDF.
-    image = models.FileField(upload_to='clinical_files/')
+    image = models.FileField(upload_to='clinical_files/', storage=ClinicalFileCloudinaryStorage())
     caption = models.CharField(max_length=200, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
