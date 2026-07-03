@@ -81,6 +81,8 @@ class ClinicalPhotoSerializer(serializers.ModelSerializer):
     file_type = serializers.SerializerMethodField()
     is_pdf = serializers.SerializerMethodField()
     filename = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
+    content_type = serializers.SerializerMethodField()
 
     def get_image_url(self, obj):
         if not obj.image:
@@ -94,6 +96,21 @@ class ClinicalPhotoSerializer(serializers.ModelSerializer):
     def get_file_type(self, obj):
         return obj.file_type
 
+    def get_file_url(self, obj):
+        return self.get_image_url(obj)
+
+    def get_content_type(self, obj):
+        if obj.is_pdf:
+            return 'application/pdf'
+        name = (obj.image.name or '').lower() if obj.image else ''
+        if name.endswith('.png'):
+            return 'image/png'
+        if name.endswith('.webp'):
+            return 'image/webp'
+        if name.endswith('.jpg') or name.endswith('.jpeg'):
+            return 'image/jpeg'
+        return ''
+
     def get_is_pdf(self, obj):
         return obj.is_pdf
 
@@ -104,5 +121,5 @@ class ClinicalPhotoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ClinicalPhoto
-        fields = ['id', 'pet', 'clinic', 'clinic_name', 'image', 'image_url', 'caption', 'file_type', 'is_pdf', 'filename', 'uploaded_at']
-        read_only_fields = ['id', 'clinic', 'uploaded_at', 'file_type', 'is_pdf', 'filename']
+        fields = ['id', 'pet', 'clinic', 'clinic_name', 'image', 'image_url', 'file_url', 'caption', 'file_type', 'is_pdf', 'filename', 'content_type', 'uploaded_at']
+        read_only_fields = ['id', 'clinic', 'uploaded_at', 'file_url', 'file_type', 'is_pdf', 'filename', 'content_type']
