@@ -9,8 +9,10 @@ class Pet(models.Model):
     SPECIES_CHOICES = [
         ('dog', 'Perro'),
         ('cat', 'Gato'),
+        ('horse', 'Caballo'),
         ('rabbit', 'Conejo'),
         ('bird', 'Ave'),
+        ('cow', 'Vaca / Toro'),
         ('hamster', 'Hamster'),
         ('reptile', 'Reptil'),
         ('fish', 'Pez'),

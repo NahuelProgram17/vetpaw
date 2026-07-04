@@ -52,7 +52,7 @@ def generate_pet_pdf(pet, clinic):
     # Datos de la mascota
     elements.append(Paragraph('Datos de la Mascota', section_style))
     owner = pet.owner
-    species_map = {'dog':'Perro','cat':'Gato','rabbit':'Conejo','bird':'Ave','hamster':'Hamster','reptile':'Reptil','fish':'Pez','other':'Otro'}
+    species_map = {'dog':'Perro','cat':'Gato','horse':'Caballo','rabbit':'Conejo','bird':'Ave','cow':'Vaca / Toro','hamster':'Hamster','reptile':'Reptil','fish':'Pez','other':'Otro'}
     sex_map = {'male':'Macho','female':'Hembra'}
 
     pet_data = [
