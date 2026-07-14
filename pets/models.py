@@ -173,3 +173,32 @@ class Treatment(models.Model):
 
     def __str__(self):
         return f"{self.get_treatment_type_display()} — {self.pet.name} ({self.date_applied})"
+
+
+class BirthdayCelebration(models.Model):
+    """Recuerdo anual de cumpleaños generado dentro de VetPaw."""
+    pet = models.ForeignKey(
+        Pet,
+        on_delete=models.CASCADE,
+        related_name='birthday_celebrations'
+    )
+    year = models.PositiveIntegerField()
+    age = models.PositiveIntegerField()
+    birthday_date = models.DateField()
+    opened_at = models.DateTimeField(null=True, blank=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+    card_downloaded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-birthday_date', '-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['pet', 'year'],
+                name='unique_pet_birthday_celebration_year'
+            )
+        ]
+
+    def __str__(self):
+        return f"Cumpleaños {self.year} — {self.pet.name} ({self.age})"

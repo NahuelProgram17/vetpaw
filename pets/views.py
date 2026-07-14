@@ -5,8 +5,9 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from django.http import FileResponse, HttpResponse
-from .models import Pet, Vaccine, ClinicalPhoto, Treatment
-from .serializers import PetSerializer, VaccineSerializer, ClinicalPhotoSerializer, TreatmentSerializer
+from datetime import timedelta
+from .models import Pet, Vaccine, ClinicalPhoto, Treatment, BirthdayCelebration
+from .serializers import PetSerializer, VaccineSerializer, ClinicalPhotoSerializer, TreatmentSerializer, BirthdayCelebrationSerializer
 from clinics.models import ClinicMembership
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
@@ -41,7 +42,9 @@ class PetViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         if user.is_owner:
-            return Pet.objects.filter(owner=user)
+            from .birthdays import sync_birthday_celebrations
+            sync_birthday_celebrations(user)
+            return Pet.objects.filter(owner=user).prefetch_related('birthday_celebrations')
         elif user.is_clinic:
             try:
                 clinic = user.clinic_profile
@@ -299,3 +302,83 @@ class TreatmentViewSet(viewsets.ModelViewSet):
         if not self.request.user.is_owner or pet.owner_id != self.request.user.id:
             raise PermissionDenied('Solo el dueño puede editar tratamientos de su mascota.')
         serializer.save()
+
+
+class BirthdayCelebrationViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = BirthdayCelebrationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        if not self.request.user.is_owner:
+            return BirthdayCelebration.objects.none()
+        from .birthdays import sync_birthday_celebrations
+        sync_birthday_celebrations(self.request.user)
+        queryset = BirthdayCelebration.objects.select_related('pet').filter(
+            pet__owner=self.request.user
+        )
+        unread = self.request.query_params.get('unread')
+        if unread in ('1', 'true', 'True'):
+            queryset = queryset.filter(read_at__isnull=True)
+        return queryset
+
+    @action(detail=False, methods=['get'], url_path='current')
+    def current(self, request):
+        if not request.user.is_owner:
+            raise PermissionDenied('Solo los dueños pueden ver cumpleaños.')
+        from django.utils import timezone
+        from .birthdays import sync_birthday_celebrations, BIRTHDAY_POPUP_WINDOW_DAYS
+        sync_birthday_celebrations(request.user)
+        today = timezone.localdate()
+        celebrations = BirthdayCelebration.objects.select_related('pet').filter(
+            pet__owner=request.user,
+            opened_at__isnull=True,
+            birthday_date__lte=today,
+            birthday_date__gte=today - timedelta(days=BIRTHDAY_POPUP_WINDOW_DAYS),
+        )
+        serializer = self.get_serializer(celebrations, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='open-gift')
+    def open_gift(self, request, pk=None):
+        celebration = self.get_object()
+        from django.utils import timezone
+        now = timezone.now()
+        fields = []
+        if celebration.opened_at is None:
+            celebration.opened_at = now
+            fields.append('opened_at')
+        if celebration.read_at is None:
+            celebration.read_at = now
+            fields.append('read_at')
+        if fields:
+            fields.append('updated_at')
+            celebration.save(update_fields=fields)
+        return Response(self.get_serializer(celebration).data)
+
+    @action(detail=True, methods=['post'], url_path='mark-read')
+    def mark_read(self, request, pk=None):
+        celebration = self.get_object()
+        if celebration.read_at is None:
+            from django.utils import timezone
+            celebration.read_at = timezone.now()
+            celebration.save(update_fields=['read_at', 'updated_at'])
+        return Response(self.get_serializer(celebration).data)
+
+    @action(detail=True, methods=['post'], url_path='card-downloaded')
+    def card_downloaded(self, request, pk=None):
+        celebration = self.get_object()
+        from django.utils import timezone
+        celebration.card_downloaded_at = timezone.now()
+        celebration.save(update_fields=['card_downloaded_at', 'updated_at'])
+        return Response({'message': 'Tarjeta registrada.'})
+
+    @action(detail=False, methods=['post'], url_path='mark-all-read')
+    def mark_all_read(self, request):
+        if not request.user.is_owner:
+            raise PermissionDenied('Solo los dueños pueden ver cumpleaños.')
+        from django.utils import timezone
+        updated = BirthdayCelebration.objects.filter(
+            pet__owner=request.user,
+            read_at__isnull=True,
+        ).update(read_at=timezone.now())
+        return Response({'updated': updated})

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Pet, Vaccine, ClinicalPhoto, Treatment
+from .models import Pet, Vaccine, ClinicalPhoto, Treatment, BirthdayCelebration
 
 
 class TreatmentSerializer(serializers.ModelSerializer):
@@ -29,6 +29,74 @@ class VaccineSerializer(serializers.ModelSerializer):
         ]
 
 
+class BirthdayCelebrationSerializer(serializers.ModelSerializer):
+    pet_name = serializers.CharField(source='pet.name', read_only=True)
+    pet_species = serializers.CharField(source='pet.species', read_only=True)
+    pet_species_display = serializers.CharField(source='pet.get_species_display', read_only=True)
+    pet_photo = serializers.SerializerMethodField()
+    badge = serializers.SerializerMethodField()
+    message = serializers.SerializerMethodField()
+    gift_text = serializers.SerializerMethodField()
+    is_opened = serializers.SerializerMethodField()
+    is_read = serializers.SerializerMethodField()
+    is_today = serializers.SerializerMethodField()
+    days_since_birthday = serializers.SerializerMethodField()
+    popup_active = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BirthdayCelebration
+        fields = [
+            'id', 'pet', 'pet_name', 'pet_species', 'pet_species_display',
+            'pet_photo', 'year', 'age', 'birthday_date', 'badge', 'message',
+            'gift_text', 'is_opened', 'is_read', 'is_today',
+            'days_since_birthday', 'popup_active', 'opened_at', 'read_at',
+            'card_downloaded_at', 'created_at',
+        ]
+        read_only_fields = fields
+
+    def get_pet_photo(self, obj):
+        if not obj.pet.photo:
+            return None
+        url = obj.pet.photo.url
+        request = self.context.get('request')
+        if request and url.startswith('/'):
+            return request.build_absolute_uri(url)
+        return url
+
+    def get_badge(self, obj):
+        from .birthdays import badge_for_age
+        badge = badge_for_age(obj.age).copy()
+        badge['year'] = obj.year
+        return badge
+
+    def get_message(self, obj):
+        from .birthdays import birthday_message
+        return birthday_message(obj.pet, obj.age)
+
+    def get_gift_text(self, obj):
+        from .birthdays import gift_for_pet
+        return gift_for_pet(obj.pet)
+
+    def get_is_opened(self, obj):
+        return obj.opened_at is not None
+
+    def get_is_read(self, obj):
+        return obj.read_at is not None
+
+    def get_days_since_birthday(self, obj):
+        from django.utils import timezone
+        return max(0, (timezone.localdate() - obj.birthday_date).days)
+
+    def get_is_today(self, obj):
+        from django.utils import timezone
+        return obj.birthday_date == timezone.localdate()
+
+    def get_popup_active(self, obj):
+        from .birthdays import BIRTHDAY_POPUP_WINDOW_DAYS
+        days = self.get_days_since_birthday(obj)
+        return 0 <= days <= BIRTHDAY_POPUP_WINDOW_DAYS
+
+
 class PetSerializer(serializers.ModelSerializer):
     vaccines = VaccineSerializer(many=True, read_only=True)
     treatments = TreatmentSerializer(many=True, read_only=True)
@@ -46,6 +114,9 @@ class PetSerializer(serializers.ModelSerializer):
         read_only=True
     )
     photo = serializers.SerializerMethodField()
+    birthday_badges = BirthdayCelebrationSerializer(source='birthday_celebrations', many=True, read_only=True)
+    birthday_frame_active = serializers.SerializerMethodField()
+    birthday_age = serializers.SerializerMethodField()
 
     def get_photo(self, obj):
         if not obj.photo:
@@ -55,6 +126,27 @@ class PetSerializer(serializers.ModelSerializer):
         if request and url.startswith('/'):
             return request.build_absolute_uri(url)
         return url
+
+    def get_birthday_frame_active(self, obj):
+        if not obj.birth_date:
+            return False
+        from django.utils import timezone
+        from .birthdays import birthday_for_year, BIRTHDAY_FRAME_DAYS
+        today = timezone.localdate()
+        birthday = birthday_for_year(obj.birth_date, today.year)
+        days = (today - birthday).days
+        return 0 <= days <= BIRTHDAY_FRAME_DAYS
+
+    def get_birthday_age(self, obj):
+        if not obj.birth_date:
+            return None
+        from django.utils import timezone
+        from .birthdays import birthday_for_year
+        today = timezone.localdate()
+        birthday = birthday_for_year(obj.birth_date, today.year)
+        if birthday > today:
+            return None
+        return today.year - obj.birth_date.year
 
     def get_owner_phone(self, obj):
         if obj.owner:
@@ -70,7 +162,8 @@ class PetSerializer(serializers.ModelSerializer):
             'notes', 'is_neutered', 'vaccines', 'treatments',
             'feeding', 'habitat', 'lives_with_animals',
             'temperament', 'temperament_display',
-            'owner', 'owner_name', 'owner_phone', 'created_at', 'updated_at'
+            'owner', 'owner_name', 'owner_phone', 'birthday_badges',
+            'birthday_frame_active', 'birthday_age', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'owner', 'created_at', 'updated_at']
 
