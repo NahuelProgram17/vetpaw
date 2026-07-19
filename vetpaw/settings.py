@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'contact',
     'ads',
     'blog',
+    'community.apps.CommunityConfig',
     'axes',
 ]
 

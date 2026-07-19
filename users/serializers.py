@@ -43,9 +43,9 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
             'role', 'gender', 'phone', 'province', 'locality', 'avatar', 'bio',
-            'created_at', 'is_approved',
+            'created_at', 'is_approved', 'is_staff', 'is_superuser',
         ]
-        read_only_fields = ['id', 'created_at', 'is_approved']
+        read_only_fields = ['id', 'created_at', 'is_approved', 'is_staff', 'is_superuser']
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
