@@ -42,6 +42,17 @@ class CommunityApiTests(APITestCase):
         self.assertTrue(Report.objects.filter(post=post, reporter=self.other).exists())
 
 
+
+    def test_feed_can_filter_by_hashtag(self):
+        Post.objects.create(created_by=self.owner, pet=self.pet, text='Paseo de domingo #MiMascota')
+        Post.objects.create(created_by=self.owner, pet=self.pet, text='Otra publicación sin etiqueta')
+
+        response = self.client.get('/api/community/posts/?hashtag=MiMascota')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 1)
+        self.assertIn('#MiMascota', response.data['results'][0]['text'])
+
     def test_discover_and_public_pet_profile(self):
         discover = self.client.get('/api/community/discover/')
         self.assertEqual(discover.status_code, 200)

@@ -1,3 +1,4 @@
+import re
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -100,6 +101,12 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
         province = request.query_params.get('province')
         if province:
             queryset = queryset.filter(province__icontains=province)
+        hashtag = request.query_params.get('hashtag')
+        if hashtag:
+            normalized_hashtag = re.sub(r'[^\w-]', '', hashtag.lstrip('#'), flags=re.UNICODE)[:50]
+            if normalized_hashtag:
+                queryset = queryset.filter(text__icontains=f'#{normalized_hashtag}')
+
         search = request.query_params.get('search')
         if search:
             queryset = queryset.filter(
