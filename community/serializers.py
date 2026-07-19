@@ -3,6 +3,7 @@ from rest_framework import serializers
 
 from clinics.models import Clinic
 from pets.models import Pet
+from vetpaw.image_validation import validate_uploaded_image
 
 from .models import BlockedUser, Comment, PetFollow, PetSocialProfile, Post, Reaction, Report, SavedPost
 
@@ -92,8 +93,8 @@ class PostSerializer(serializers.ModelSerializer):
         image = attrs.get('image')
         if not text and not image:
             raise serializers.ValidationError('Agregá un texto o una foto.')
-        if image and image.size > 5 * 1024 * 1024:
-            raise serializers.ValidationError({'image': 'La foto no puede superar los 5 MB.'})
+        if image:
+            validate_uploaded_image(image, max_mb=5, label='La foto')
         attrs['text'] = text
         return attrs
 
@@ -324,9 +325,7 @@ class PetSocialProfileSerializer(serializers.ModelSerializer):
         return PostSerializer(posts, many=True, context=self.context).data
 
     def validate_cover(self, value):
-        if value and value.size > 5 * 1024 * 1024:
-            raise serializers.ValidationError('La portada no puede superar los 5 MB.')
-        return value
+        return validate_uploaded_image(value, max_mb=5, label='La portada')
 
 
 class ReportSerializer(serializers.ModelSerializer):

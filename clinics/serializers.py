@@ -2,6 +2,7 @@ from rest_framework import serializers
 from django.db.models import Avg
 from .models import Clinic, ClinicMembership, ClinicPhoto, ClinicSchedule
 from appointments.models import Review
+from vetpaw.image_validation import validate_uploaded_image
 
 
 class ReviewSerializer(serializers.ModelSerializer):
@@ -25,12 +26,7 @@ class ClinicPhotoSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
     def validate_image(self, value):
-        if value.size > 3 * 1024 * 1024:
-            raise serializers.ValidationError("La foto no puede superar los 3MB.")
-        allowed = ['image/jpeg', 'image/png', 'image/webp']
-        if hasattr(value, 'content_type') and value.content_type not in allowed:
-            raise serializers.ValidationError("Solo se permiten imágenes JPG, PNG o WebP.")
-        return value
+        return validate_uploaded_image(value, max_mb=3, label='La foto de la veterinaria')
 
 
 class ClinicScheduleSerializer(serializers.ModelSerializer):
@@ -127,6 +123,9 @@ class ClinicSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'slug', 'created_at', 'members_count', 'rating_avg',
                             'reviews_count', 'distance_km', 'is_member', 'has_schedule']
+
+    def validate_logo(self, value):
+        return validate_uploaded_image(value, max_mb=3, label='El logo de la veterinaria')
 
     def get_members_count(self, obj):
         return obj.members.filter(status='active').count()

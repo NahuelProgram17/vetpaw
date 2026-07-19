@@ -13,6 +13,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
+from vetpaw.image_validation import validate_uploaded_image
 
 
 def _sniff_image_content_type(data, filename=""):
@@ -162,10 +163,19 @@ class ClinicalPhotoViewSet(viewsets.ViewSet):
             return Response({'error': 'El archivo no puede superar los 10MB.'}, status=status.HTTP_400_BAD_REQUEST)
         filename = (image.name or '').lower()
         content_type = (image.content_type or '').lower()
-        allowed_types = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
-        allowed_exts = ('.jpg', '.jpeg', '.png', '.webp', '.pdf')
-        if content_type not in allowed_types and not filename.endswith(allowed_exts):
-            return Response({'error': 'Solo se permiten imágenes JPG, PNG, WebP o archivos PDF.'}, status=status.HTTP_400_BAD_REQUEST)
+        is_pdf_upload = content_type == 'application/pdf' or filename.endswith('.pdf')
+        if is_pdf_upload:
+            header = image.read(5)
+            image.seek(0)
+            if header != b'%PDF-':
+                return Response({'error': 'El archivo seleccionado no es un PDF válido.'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            try:
+                validate_uploaded_image(image, max_mb=10, label='La imagen clínica')
+            except Exception as exc:
+                detail = getattr(exc, 'detail', None)
+                message = str(detail[0] if isinstance(detail, list) and detail else detail or exc)
+                return Response({'error': message}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             pet = Pet.objects.get(pk=pet_id)
@@ -173,8 +183,6 @@ class ClinicalPhotoViewSet(viewsets.ViewSet):
             return Response({'error': 'Mascota no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
 
         caption = request.data.get('caption', '')
-        is_pdf_upload = content_type == 'application/pdf' or filename.endswith('.pdf')
-
         if is_pdf_upload:
             # No mandamos PDFs a Cloudinary: muchas cuentas responden 401 al abrir raw PDF.
             # Lo guardamos en la base y lo servimos desde la API autenticada.

@@ -2,6 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from .models import User
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from vetpaw.image_validation import validate_uploaded_image
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -38,6 +39,9 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    def validate_avatar(self, value):
+        return validate_uploaded_image(value, max_mb=3, label='La foto de perfil')
+
     class Meta:
         model = User
         fields = [

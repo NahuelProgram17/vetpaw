@@ -14,6 +14,13 @@ def is_admin(user):
     return user.is_authenticated and user.username == ADMIN_USERNAME
 
 
+def format_local_datetime(value):
+    """Muestra fechas del panel con la hora configurada para Argentina."""
+    if not value:
+        return '—'
+    return timezone.localtime(value).strftime('%d/%m/%Y %H:%M')
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def admin_panel(request):
@@ -28,7 +35,7 @@ def admin_panel(request):
 
     now = timezone.now()
     week_ago = now - timedelta(days=7)
-    today = now.date()
+    today = timezone.localdate()
 
     # ── Métricas globales ──
     total_owners   = User.objects.filter(role='owner').count()
@@ -93,7 +100,7 @@ def admin_panel(request):
             'username': u.username,
             'email': u.email,
             'role': u.role,
-            'date_joined': u.date_joined.strftime('%d/%m/%Y %H:%M'),
+            'date_joined': format_local_datetime(u.date_joined),
         }
         for u in last_users
     ]
@@ -118,7 +125,7 @@ def admin_panel(request):
                 'ip': a.ip_address,
                 'username': a.username,
                 'attempts': a.failures_since_start,
-                'last_attempt': a.attempt_time.strftime('%d/%m/%Y %H:%M'),
+                'last_attempt': format_local_datetime(a.attempt_time),
                 'locked': a.failures_since_start >= 5,
             }
             for a in blocked
@@ -135,7 +142,7 @@ def admin_panel(request):
             'user_id':       u.id,
             'username':      u.username,
             'email':         u.email,
-            'date_joined':   u.date_joined.strftime('%d/%m/%Y %H:%M'),
+            'date_joined':   format_local_datetime(u.date_joined),
             'clinic_name':   clinic.name if clinic else '—',
             'clinic_phone':  clinic.phone if clinic else '',
             'clinic_address': clinic.address if clinic else '',
@@ -161,4 +168,4 @@ def admin_panel(request):
         'last_users':        last_users_data,
         'security':          security_data,
         'pending_clinics':   pending_clinics_data,
-    })
+    })

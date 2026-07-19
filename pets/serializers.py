@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Pet, Vaccine, ClinicalPhoto, Treatment, BirthdayCelebration
+from vetpaw.image_validation import validate_uploaded_image
 
 
 class TreatmentSerializer(serializers.ModelSerializer):
@@ -113,19 +114,13 @@ class PetSerializer(serializers.ModelSerializer):
         source='get_temperament_display',
         read_only=True
     )
-    photo = serializers.SerializerMethodField()
+    photo = serializers.ImageField(required=False, allow_null=True)
     birthday_badges = BirthdayCelebrationSerializer(source='birthday_celebrations', many=True, read_only=True)
     birthday_frame_active = serializers.SerializerMethodField()
     birthday_age = serializers.SerializerMethodField()
 
-    def get_photo(self, obj):
-        if not obj.photo:
-            return None
-        url = obj.photo.url
-        request = self.context.get('request')
-        if request and url.startswith('/'):
-            return request.build_absolute_uri(url)
-        return url
+    def validate_photo(self, value):
+        return validate_uploaded_image(value, max_mb=5, label='La foto de la mascota')
 
     def get_birthday_frame_active(self, obj):
         if not obj.birth_date:

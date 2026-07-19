@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import LostPet
+from vetpaw.image_validation import validate_uploaded_image
 
 
 class LostPetSerializer(serializers.ModelSerializer):
@@ -24,6 +25,10 @@ class LostPetSerializer(serializers.ModelSerializer):
             'report_count', 'expires_at', 'days_left', 'created_at'
         ]
         extra_kwargs = {'photo': {'write_only': True}}
+
+
+    def validate_photo(self, value):
+        return validate_uploaded_image(value, max_mb=5, label='La foto')
 
     def get_days_left(self, obj):
         from django.utils import timezone

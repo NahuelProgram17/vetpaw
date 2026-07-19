@@ -1,8 +1,12 @@
 from rest_framework import serializers
 from .models import Advertiser
+from vetpaw.image_validation import validate_uploaded_image
 
 
 class AdvertiserSerializer(serializers.ModelSerializer):
+    def validate_image(self, value):
+        return validate_uploaded_image(value, max_mb=5, label='La imagen del anuncio')
+
     image_url = serializers.SerializerMethodField()
 
     class Meta:

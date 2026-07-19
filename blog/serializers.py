@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Post
+from vetpaw.image_validation import validate_uploaded_image
 
 
 class PostListSerializer(serializers.ModelSerializer):
@@ -16,6 +17,9 @@ class PostListSerializer(serializers.ModelSerializer):
 
 
 class PostSerializer(serializers.ModelSerializer):
+    def validate_cover(self, value):
+        return validate_uploaded_image(value, max_mb=5, label='La portada del artículo')
+
     cover_url = serializers.SerializerMethodField()
 
     class Meta:
