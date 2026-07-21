@@ -1,14 +1,17 @@
-from django.http import FileResponse
-from rest_framework import viewsets, permissions, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from .models import Visit, Appointment
-from .serializers import VisitSerializer, AppointmentSerializer
-from .models import Visit, Appointment, Review
-from .serializers import VisitSerializer, AppointmentSerializer, ReviewSerializer
+from datetime import timedelta
+
 from django.db.models import Avg
+from django.http import FileResponse
+from django.utils import timezone
+from rest_framework import permissions, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.response import Response
+
 from pets.models import Pet
 
+from .models import Appointment, Review, Visit
+from .serializers import AppointmentSerializer, ReviewSerializer, VisitSerializer
 
 class VisitViewSet(viewsets.ModelViewSet):
     serializer_class = VisitSerializer
@@ -26,15 +29,48 @@ class VisitViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         if not self.request.user.is_clinic:
-            from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('Solo las clínicas pueden cargar visitas.')
-        clinic = self.request.user.clinic_profile
-        visit = serializer.save(clinic=clinic)
-        Appointment.objects.filter(
-            pet=visit.pet,
+
+        try:
+            clinic = self.request.user.clinic_profile
+        except Exception as exc:
+            raise PermissionDenied('No tenés una clínica asociada.') from exc
+
+        pet = serializer.validated_data['pet']
+        cutoff = timezone.now() - timedelta(days=270)
+        has_active_access = pet.clinic_accesses.filter(
             clinic=clinic,
-            status='confirmed'
-        ).update(status='completed')
+            last_appointment__gte=cutoff,
+        ).exists()
+        has_appointment = Appointment.objects.filter(
+            clinic=clinic,
+            pet=pet,
+        ).exclude(status='cancelled').exists()
+
+        if not has_active_access and not has_appointment:
+            raise PermissionDenied('Esta mascota no está vinculada a tu clínica.')
+
+        appointment_id = serializer.validated_data.get('appointment_id')
+        appointment = None
+        if appointment_id:
+            appointment = Appointment.objects.filter(
+                pk=appointment_id,
+                clinic=clinic,
+                pet=pet,
+                status='confirmed',
+            ).first()
+            if appointment is None:
+                raise ValidationError({
+                    'appointment_id': 'El turno no existe, no pertenece al paciente o ya no está confirmado.'
+                })
+
+        serializer.save(clinic=clinic)
+
+        # Solo se completa el turno desde el que se abrió "Cargar visita".
+        # Una visita cargada desde la ficha del paciente no altera turnos futuros.
+        if appointment is not None:
+            appointment.status = 'completed'
+            appointment.save(update_fields=['status', 'updated_at'])
 
 
 class AppointmentViewSet(viewsets.ModelViewSet):

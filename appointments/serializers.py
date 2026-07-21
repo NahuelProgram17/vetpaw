@@ -4,17 +4,22 @@ from .models import Visit, Appointment, Review
 
 class VisitSerializer(serializers.ModelSerializer):
     clinic_name = serializers.CharField(source='clinic.name', read_only=True)
-    pet_name    = serializers.CharField(source='pet.name',    read_only=True)
+    pet_name = serializers.CharField(source='pet.name', read_only=True)
+    appointment_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
 
     class Meta:
         model  = Visit
         fields = [
-            'id', 'pet', 'pet_name', 'clinic', 'clinic_name',
+            'id', 'pet', 'pet_name', 'clinic', 'clinic_name', 'appointment_id',
             'date', 'reason', 'diagnosis', 'treatment', 'observations',
             'next_visit', 'vet_first_name', 'vet_last_name', 'vet_license',
-            'vet_clinic_name','created_at'
+            'vet_clinic_name', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']
+
+    def create(self, validated_data):
+        validated_data.pop('appointment_id', None)
+        return super().create(validated_data)
 
 
 class AppointmentSerializer(serializers.ModelSerializer):
