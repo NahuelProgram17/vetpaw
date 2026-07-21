@@ -12,7 +12,7 @@ from rest_framework.test import APITestCase
 from pets.models import Pet
 from users.models import User
 
-from .models import BlockedUser, Comment, CommunityNotification, PetFollow, Post, PushSubscription, Reaction, Report
+from .models import BlockedUser, Comment, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report
 
 
 class CommunityApiTests(APITestCase):
@@ -489,3 +489,140 @@ class CommunityApiTests(APITestCase):
         self.assertIsNotNone(subscription.last_success_at)
         self.assertTrue(subscription.is_active)
         mocked_webpush.assert_called_once()
+
+
+    def test_explore_searches_pets_clinics_posts_and_hashtags(self):
+        cat = Pet.objects.create(
+            owner=self.other,
+            name='Luna',
+            species='cat',
+            breed='Siamesa',
+            sex='female',
+        )
+        PetSocialProfile.objects.get_or_create(pet=cat)
+        clinic_user = User.objects.create_user(
+            username='clinic_explore',
+            email='clinic-explore@example.com',
+            password=token_urlsafe(24),
+            role='clinic',
+            is_approved=True,
+        )
+        Clinic.objects.create(
+            owner=clinic_user,
+            name='Veterinaria Luna',
+            address='Calle 123',
+            locality='Moreno',
+            province='Buenos Aires',
+            is_24h=True,
+            services=['Guardia', 'Vacunación'],
+        )
+        Post.objects.create(
+            created_by=self.other,
+            pet=cat,
+            text='Luna jugando con una caja #GatosFelices',
+            locality='Moreno',
+            province='Buenos Aires',
+        )
+
+        response = self.client.get('/api/community/explore/', {'q': 'Luna'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['counts']['pets'], 1)
+        self.assertEqual(response.data['counts']['clinics'], 1)
+        self.assertEqual(response.data['counts']['posts'], 1)
+        self.assertEqual(response.data['results']['pets'][0]['name'], 'Luna')
+        self.assertTrue(any(item['kind'] == 'pet' for item in response.data['suggestions']))
+
+        smart_query = self.client.get('/api/community/explore/', {'q': 'Guardia Moreno', 'section': 'clinics'})
+        self.assertEqual(smart_query.status_code, 200)
+        self.assertEqual(smart_query.data['pagination']['total'], 1)
+        self.assertEqual(smart_query.data['results']['clinics'][0]['name'], 'Veterinaria Luna')
+
+        hashtags = self.client.get('/api/community/explore/', {'q': 'Gatos', 'section': 'hashtags'})
+        self.assertEqual(hashtags.status_code, 200)
+        self.assertEqual(hashtags.data['results']['hashtags'][0]['name'], 'gatosfelices')
+
+    def test_explore_supports_species_location_and_24h_filters(self):
+        cat = Pet.objects.create(
+            owner=self.other,
+            name='Mishi',
+            species='cat',
+            sex='female',
+        )
+        self.other.locality = 'Merlo'
+        self.other.province = 'Buenos Aires'
+        self.other.save(update_fields=['locality', 'province'])
+        PetSocialProfile.objects.get_or_create(pet=cat)
+
+        clinic_user = User.objects.create_user(
+            username='clinic_24h',
+            email='clinic-24h@example.com',
+            password=token_urlsafe(24),
+            role='clinic',
+            is_approved=True,
+        )
+        Clinic.objects.create(
+            owner=clinic_user,
+            name='Guardia Animal',
+            address='Avenida Siempre Viva',
+            locality='Merlo',
+            province='Buenos Aires',
+            is_24h=True,
+        )
+
+        pets = self.client.get('/api/community/explore/', {
+            'section': 'pets', 'species': 'cat', 'locality': 'Merlo',
+        })
+        self.assertEqual(pets.status_code, 200)
+        self.assertEqual(pets.data['pagination']['total'], 1)
+        self.assertEqual(pets.data['results']['pets'][0]['name'], 'Mishi')
+
+        clinics = self.client.get('/api/community/explore/', {
+            'section': 'clinics', 'locality': 'Merlo', 'is_24h': 'true',
+        })
+        self.assertEqual(clinics.status_code, 200)
+        self.assertEqual(clinics.data['pagination']['total'], 1)
+        self.assertTrue(clinics.data['results']['clinics'][0]['is_24h'])
+
+    def test_explore_hides_private_and_blocked_profiles(self):
+        private_pet = Pet.objects.create(
+            owner=self.other,
+            name='Oculta',
+            species='dog',
+            sex='female',
+        )
+        private_profile, _ = PetSocialProfile.objects.get_or_create(pet=private_pet)
+        private_profile.is_public = False
+        private_profile.save(update_fields=['is_public'])
+
+        visible_pet = Pet.objects.create(
+            owner=self.moderator,
+            name='Bloqueada',
+            species='dog',
+            sex='female',
+        )
+        PetSocialProfile.objects.get_or_create(pet=visible_pet)
+        Post.objects.create(created_by=self.moderator, pet=visible_pet, text='Contenido bloqueado')
+        BlockedUser.objects.create(blocker=self.owner, blocked=self.moderator)
+
+        self.client.force_authenticate(self.owner)
+        private_result = self.client.get('/api/community/explore/', {'q': 'Oculta'})
+        blocked_result = self.client.get('/api/community/explore/', {'q': 'Bloqueada'})
+
+        self.assertEqual(private_result.data['counts']['pets'], 0)
+        self.assertEqual(blocked_result.data['counts']['pets'], 0)
+        self.assertEqual(blocked_result.data['counts']['posts'], 0)
+
+    def test_explore_popular_posts_prioritizes_engagement(self):
+        popular = Post.objects.create(created_by=self.owner, pet=self.pet, text='Publicación popular')
+        recent = Post.objects.create(created_by=self.owner, pet=self.pet, text='Publicación reciente')
+        Reaction.objects.create(post=popular, user=self.other)
+        Comment.objects.create(post=popular, author=self.other, text='Hermoso')
+
+        response = self.client.get('/api/community/explore/', {
+            'section': 'posts', 'sort': 'popular',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(response.data['pagination']['total'], 2)
+        self.assertEqual(response.data['results']['posts'][0]['id'], popular.id)

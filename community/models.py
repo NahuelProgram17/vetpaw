@@ -236,8 +236,8 @@ class CommunityNotification(models.Model):
     class Meta:
         ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['recipient', 'is_read', '-created_at']),
-            models.Index(fields=['notification_type', '-created_at']),
+            models.Index(fields=['recipient', 'is_read', '-created_at'], name='comm_notif_rec_read_idx'),
+            models.Index(fields=['notification_type', '-created_at'], name='comm_notif_type_date_idx'),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -277,7 +277,7 @@ class PushSubscription(models.Model):
     class Meta:
         ordering = ['-updated_at']
         indexes = [
-            models.Index(fields=['user', 'is_active', '-updated_at']),
+            models.Index(fields=['user', 'is_active', '-updated_at'], name='community_p_user_id_152c42_idx'),
         ]
 
     def __str__(self):

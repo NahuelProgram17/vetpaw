@@ -29,3 +29,15 @@ class CommunityActionThrottle(SimpleRateThrottle):
         if request.user.is_authenticated:
             return self.cache_format % {'scope': self.scope, 'ident': request.user.pk}
         return None
+
+
+class CommunityExploreThrottle(SimpleRateThrottle):
+    scope = 'community_explore'
+    rate = '240/hour'
+
+    def get_cache_key(self, request, view):
+        if request.user.is_authenticated:
+            ident = f'user-{request.user.pk}'
+        else:
+            ident = self.get_ident(request)
+        return self.cache_format % {'scope': self.scope, 'ident': ident}

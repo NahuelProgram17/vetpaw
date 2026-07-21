@@ -1,6 +1,8 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from .explore import community_explore
+
 from .views import (
     BlockedUserViewSet,
     CommentViewSet,
@@ -24,4 +26,5 @@ router.register(r'community/blocks', BlockedUserViewSet, basename='community-blo
 urlpatterns = [
     path('', include(router.urls)),
     path('community/discover/', community_discover, name='community-discover'),
+    path('community/explore/', community_explore, name='community-explore'),
 ]
