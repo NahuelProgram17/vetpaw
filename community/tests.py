@@ -232,14 +232,12 @@ class CommunityApiTests(APITestCase):
 
         self.client.force_authenticate(self.other)
         self.assertEqual(self.client.post(f'/api/community/posts/{post.id}/react/').status_code, 200)
-        self.assertEqual(
-            self.client.post(
-                f'/api/community/posts/{post.id}/comments/',
-                {'text': '¡Qué lindo Toby!'},
-                format='json',
-            ).status_code,
-            201,
+        comment_response = self.client.post(
+            f'/api/community/posts/{post.id}/comments/',
+            {'text': '¡Qué lindo Toby!'},
+            format='json',
         )
+        self.assertEqual(comment_response.status_code, 201)
         self.assertEqual(self.client.post(f'/api/community/pets/{self.pet.id}/follow/').status_code, 200)
 
         self.client.force_authenticate(self.owner)
@@ -256,6 +254,22 @@ class CommunityApiTests(APITestCase):
             {'reaction', 'comment', 'follow'},
         )
         self.assertTrue(all(item['target_url'] for item in notifications))
+        comment_notification = next(
+            item for item in notifications
+            if item['notification_type'] == CommunityNotification.TYPE_COMMENT
+        )
+        self.assertEqual(comment_notification['comment_id'], comment_response.data['id'])
+        self.assertEqual(
+            comment_notification['target_url'],
+            f"/comunidad?publicacion={post.id}&comentario={comment_response.data['id']}",
+        )
+
+        from .push_utils import notification_target_url
+        comment_model = CommunityNotification.objects.get(pk=comment_notification['id'])
+        self.assertEqual(
+            notification_target_url(comment_model),
+            f"/comunidad?publicacion={post.id}&comentario={comment_response.data['id']}",
+        )
 
         first_id = notifications[0]['id']
         marked = self.client.post(f'/api/community/notifications/{first_id}/mark_read/')

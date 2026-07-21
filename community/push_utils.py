@@ -59,6 +59,12 @@ def notification_message(notification):
 def notification_target_url(notification):
     if notification.notification_type == CommunityNotification.TYPE_FOLLOW and notification.pet_id:
         return f'/mascotas/{notification.pet_id}'
+    if (
+        notification.notification_type == CommunityNotification.TYPE_COMMENT
+        and notification.post_id
+        and notification.comment_id
+    ):
+        return f'/comunidad?publicacion={notification.post_id}&comentario={notification.comment_id}'
     if notification.post_id:
         return f'/comunidad?publicacion={notification.post_id}'
     return '/notifications'

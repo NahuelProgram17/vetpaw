@@ -377,18 +377,19 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
     target_type = serializers.SerializerMethodField()
     post_id = serializers.IntegerField(source='post.id', read_only=True)
     pet_id = serializers.IntegerField(source='pet.id', read_only=True)
+    comment_id = serializers.IntegerField(source='comment.id', read_only=True)
 
     class Meta:
         model = CommunityNotification
         fields = [
             'id', 'notification_type', 'actor', 'message', 'extra_text',
             'is_read', 'read_at', 'created_at', 'target_url', 'target_type',
-            'post_id', 'pet_id',
+            'post_id', 'pet_id', 'comment_id',
         ]
         read_only_fields = [
             'id', 'notification_type', 'actor', 'message', 'extra_text',
             'is_read', 'read_at', 'created_at', 'target_url', 'target_type',
-            'post_id', 'pet_id',
+            'post_id', 'pet_id', 'comment_id',
         ]
 
     def _actor_name(self, obj):
@@ -421,6 +422,12 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
     def get_target_url(self, obj):
         if obj.notification_type == CommunityNotification.TYPE_FOLLOW and obj.pet_id:
             return f'/mascotas/{obj.pet_id}'
+        if (
+            obj.notification_type == CommunityNotification.TYPE_COMMENT
+            and obj.post_id
+            and obj.comment_id
+        ):
+            return f'/comunidad?publicacion={obj.post_id}&comentario={obj.comment_id}'
         if obj.post_id:
             return f'/comunidad?publicacion={obj.post_id}'
         return '/comunidad'
