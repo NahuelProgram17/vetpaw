@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import BlockedUser, Comment, PetFollow, PetSocialProfile, Post, Reaction, Report, SavedPost
+from .models import BlockedUser, Comment, CommunityNotification, PetFollow, PetSocialProfile, Post, Reaction, Report, SavedPost
 
 
 @admin.register(Post)
@@ -57,3 +57,11 @@ admin.site.register(Reaction)
 admin.site.register(PetFollow)
 admin.site.register(SavedPost)
 admin.site.register(BlockedUser)
+
+
+@admin.register(CommunityNotification)
+class CommunityNotificationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'recipient', 'actor', 'notification_type', 'is_read', 'created_at')
+    list_filter = ('notification_type', 'is_read', 'created_at')
+    search_fields = ('recipient__username', 'actor__username', 'extra_text')
+    readonly_fields = ('created_at', 'updated_at')

@@ -13,12 +13,20 @@ from clinics.models import Clinic
 from lost_pets.models import LostPet
 from pets.models import BirthdayCelebration, Pet
 
-from .models import BlockedUser, Comment, PetFollow, PetSocialProfile, Post, Reaction, Report, SavedPost
+from .models import BlockedUser, Comment, CommunityNotification, PetFollow, PetSocialProfile, Post, Reaction, Report, SavedPost
+from .notification_utils import (
+    create_comment_notification,
+    create_follow_notification,
+    create_reaction_notification,
+    remove_follow_notification,
+    remove_reaction_notification,
+)
 from .permissions import IsOwnerOrModerator, is_community_moderator
 from .throttles import CommunityActionThrottle, CommunityCommentThrottle, CommunityPostThrottle
 from .serializers import (
     BlockedUserSerializer,
     CommentSerializer,
+    CommunityNotificationSerializer,
     PetSocialProfileSerializer,
     PostSerializer,
     ReportSerializer,
@@ -129,8 +137,11 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
     def react(self, request, pk=None):
         post = self.get_object()
         reaction, created = Reaction.objects.get_or_create(post=post, user=request.user)
-        if not created:
+        if created:
+            create_reaction_notification(post, request.user)
+        else:
             reaction.delete()
+            remove_reaction_notification(post, request.user)
         return Response({
             'reacted': created,
             'reactions_count': post.reactions.count(),
@@ -157,6 +168,7 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
         serializer = CommentSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         comment = serializer.save(post=post, author=request.user)
+        create_comment_notification(post, request.user, comment)
         return Response(CommentSerializer(comment, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 
@@ -216,9 +228,62 @@ class PetSocialProfileViewSet(viewsets.GenericViewSet):
         if pet.owner_id == request.user.id:
             return Response({'error': 'No necesitás seguir a tu propia mascota.'}, status=status.HTTP_400_BAD_REQUEST)
         follow, created = PetFollow.objects.get_or_create(follower=request.user, pet=pet)
-        if not created:
+        if created:
+            create_follow_notification(pet, request.user)
+        else:
             follow.delete()
+            remove_follow_notification(pet, request.user)
         return Response({'following': created, 'followers_count': pet.social_followers.count()})
+
+
+class CommunityNotificationPagination(PageNumberPagination):
+    page_size = 15
+    page_size_query_param = 'page_size'
+    max_page_size = 50
+
+
+class CommunityNotificationViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    serializer_class = CommunityNotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = CommunityNotificationPagination
+
+    def get_queryset(self):
+        queryset = CommunityNotification.objects.filter(
+            recipient=self.request.user
+        ).select_related(
+            'actor', 'actor__clinic_profile', 'pet', 'post__pet',
+            'post__clinic', 'post__related_lost_pet', 'comment',
+        )
+        unread = self.request.query_params.get('unread')
+        if unread in ('1', 'true', 'True'):
+            queryset = queryset.filter(is_read=False)
+        return queryset.order_by('-created_at')
+
+    @action(detail=False, methods=['get'])
+    def unread_count(self, request):
+        unread = CommunityNotification.objects.filter(
+            recipient=request.user,
+            is_read=False,
+        ).count()
+        return Response({'unread': unread})
+
+    @action(detail=False, methods=['post'])
+    def mark_all_read(self, request):
+        now = timezone.now()
+        updated = CommunityNotification.objects.filter(
+            recipient=request.user,
+            is_read=False,
+        ).update(is_read=True, read_at=now, updated_at=now)
+        return Response({'marked': updated})
+
+    @action(detail=True, methods=['post'])
+    def mark_read(self, request, pk=None):
+        notification = self.get_object()
+        if not notification.is_read:
+            notification.is_read = True
+            notification.read_at = timezone.now()
+            notification.save(update_fields=['is_read', 'read_at', 'updated_at'])
+        return Response(self.get_serializer(notification).data)
 
 
 class ReportViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, viewsets.GenericViewSet):
@@ -293,7 +358,12 @@ class BlockedUserViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         if not User.objects.filter(pk=blocked_id).exists():
             return Response({'error': 'Usuario no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         block, created = BlockedUser.objects.get_or_create(blocker=request.user, blocked_id=blocked_id)
-        if not created:
+        if created:
+            CommunityNotification.objects.filter(
+                Q(recipient=request.user, actor_id=blocked_id)
+                | Q(recipient_id=blocked_id, actor=request.user)
+            ).delete()
+        else:
             block.delete()
         return Response({'blocked': created})
 

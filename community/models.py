@@ -185,6 +185,77 @@ class BlockedUser(models.Model):
         ordering = ['-created_at']
 
 
+class CommunityNotification(models.Model):
+    TYPE_REACTION = 'reaction'
+    TYPE_COMMENT = 'comment'
+    TYPE_FOLLOW = 'follow'
+    TYPE_CHOICES = [
+        (TYPE_REACTION, 'Patita en publicación'),
+        (TYPE_COMMENT, 'Comentario en publicación'),
+        (TYPE_FOLLOW, 'Nuevo seguidor'),
+    ]
+
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='community_notifications',
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='community_notifications_sent',
+    )
+    post = models.ForeignKey(
+        Post,
+        on_delete=models.CASCADE,
+        related_name='notifications',
+        null=True,
+        blank=True,
+    )
+    comment = models.ForeignKey(
+        Comment,
+        on_delete=models.CASCADE,
+        related_name='notifications',
+        null=True,
+        blank=True,
+    )
+    pet = models.ForeignKey(
+        'pets.Pet',
+        on_delete=models.CASCADE,
+        related_name='community_notifications',
+        null=True,
+        blank=True,
+    )
+    notification_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    extra_text = models.CharField(max_length=300, blank=True)
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['recipient', 'is_read', '-created_at']),
+            models.Index(fields=['notification_type', '-created_at']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['recipient', 'actor', 'post', 'notification_type'],
+                condition=Q(notification_type='reaction'),
+                name='unique_reaction_notification',
+            ),
+            models.UniqueConstraint(
+                fields=['recipient', 'actor', 'pet', 'notification_type'],
+                condition=Q(notification_type='follow'),
+                name='unique_follow_notification',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.get_notification_type_display()} para {self.recipient}'
+
+
 class Report(models.Model):
     REASON_SPAM = 'spam'
     REASON_SCAM = 'scam'

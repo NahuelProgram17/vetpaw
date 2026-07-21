@@ -6,7 +6,7 @@ from pets.models import Pet
 from vetpaw.image_validation import validate_uploaded_image
 from users.permissions import is_community_moderator
 
-from .models import BlockedUser, Comment, PetFollow, PetSocialProfile, Post, Reaction, Report, SavedPost
+from .models import BlockedUser, Comment, CommunityNotification, PetFollow, PetSocialProfile, Post, Reaction, Report, SavedPost
 
 
 def absolute_file_url(request, field):
@@ -368,3 +368,66 @@ class BlockedUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = BlockedUser
         fields = ['id', 'blocked', 'created_at']
+
+
+class CommunityNotificationSerializer(serializers.ModelSerializer):
+    actor = CommunityUserSerializer(read_only=True)
+    message = serializers.SerializerMethodField()
+    target_url = serializers.SerializerMethodField()
+    target_type = serializers.SerializerMethodField()
+    post_id = serializers.IntegerField(source='post.id', read_only=True)
+    pet_id = serializers.IntegerField(source='pet.id', read_only=True)
+
+    class Meta:
+        model = CommunityNotification
+        fields = [
+            'id', 'notification_type', 'actor', 'message', 'extra_text',
+            'is_read', 'read_at', 'created_at', 'target_url', 'target_type',
+            'post_id', 'pet_id',
+        ]
+        read_only_fields = [
+            'id', 'notification_type', 'actor', 'message', 'extra_text',
+            'is_read', 'read_at', 'created_at', 'target_url', 'target_type',
+            'post_id', 'pet_id',
+        ]
+
+    def _actor_name(self, obj):
+        if obj.actor.role == 'clinic':
+            clinic = getattr(obj.actor, 'clinic_profile', None)
+            if clinic:
+                return clinic.name
+        return obj.actor.get_full_name().strip() or obj.actor.username
+
+    def _post_subject(self, obj):
+        if obj.post_id and obj.post.pet_id:
+            return f'la publicación de {obj.post.pet.name}'
+        if obj.post_id and obj.post.clinic_id:
+            return 'tu publicación de la veterinaria'
+        if obj.post_id and obj.post.related_lost_pet_id:
+            return 'tu aviso de mascota perdida o encontrada'
+        return 'tu publicación'
+
+    def get_message(self, obj):
+        actor_name = self._actor_name(obj)
+        if obj.notification_type == CommunityNotification.TYPE_REACTION:
+            return f'{actor_name} dejó una patita en {self._post_subject(obj)}.'
+        if obj.notification_type == CommunityNotification.TYPE_COMMENT:
+            return f'{actor_name} comentó {self._post_subject(obj)}.'
+        if obj.notification_type == CommunityNotification.TYPE_FOLLOW:
+            pet_name = obj.pet.name if obj.pet_id else 'tu mascota'
+            return f'{actor_name} comenzó a seguir a {pet_name}.'
+        return 'Tenés nueva actividad en VetPaw.'
+
+    def get_target_url(self, obj):
+        if obj.notification_type == CommunityNotification.TYPE_FOLLOW and obj.pet_id:
+            return f'/mascotas/{obj.pet_id}'
+        if obj.post_id:
+            return f'/comunidad?publicacion={obj.post_id}'
+        return '/comunidad'
+
+    def get_target_type(self, obj):
+        if obj.notification_type == CommunityNotification.TYPE_FOLLOW:
+            return 'pet'
+        if obj.post_id:
+            return 'post'
+        return 'community'
