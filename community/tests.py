@@ -1,7 +1,9 @@
 from secrets import token_urlsafe
+from unittest.mock import patch
 
 from django.contrib.auth.models import Group
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from django.urls import reverse
 
 from clinics.models import Clinic
@@ -10,7 +12,7 @@ from rest_framework.test import APITestCase
 from pets.models import Pet
 from users.models import User
 
-from .models import BlockedUser, Comment, CommunityNotification, PetFollow, Post, Reaction, Report
+from .models import BlockedUser, Comment, CommunityNotification, PetFollow, Post, PushSubscription, Reaction, Report
 
 
 class CommunityApiTests(APITestCase):
@@ -352,3 +354,124 @@ class CommunityApiTests(APITestCase):
         self.client.force_authenticate(self.owner)
         denied = self.client.post(f'/api/community/notifications/{notification.id}/mark_read/')
         self.assertEqual(denied.status_code, 404)
+
+
+    def test_push_subscription_can_be_registered_checked_and_disabled(self):
+        self.client.force_authenticate(self.owner)
+        payload = {
+            'endpoint': 'https://push.example.com/subscriptions/owner-device',
+            'keys': {'p256dh': 'public-browser-key', 'auth': 'auth-secret'},
+            'device_name': 'Chrome en Windows',
+            'user_agent': 'VetPaw test browser',
+        }
+
+        created = self.client.post('/api/community/push/subscribe/', payload, format='json')
+        self.assertEqual(created.status_code, 201)
+        subscription = PushSubscription.objects.get(endpoint=payload['endpoint'])
+        self.assertEqual(subscription.user, self.owner)
+        self.assertTrue(subscription.is_active)
+        self.assertEqual(subscription.device_name, 'Chrome en Windows')
+
+        checked = self.client.get(
+            '/api/community/push/status/',
+            {'endpoint': payload['endpoint']},
+        )
+        self.assertEqual(checked.status_code, 200)
+        self.assertTrue(checked.data['active'])
+
+        disabled = self.client.post(
+            '/api/community/push/unsubscribe/',
+            {'endpoint': payload['endpoint']},
+            format='json',
+        )
+        self.assertEqual(disabled.status_code, 200)
+        subscription.refresh_from_db()
+        self.assertFalse(subscription.is_active)
+
+    def test_push_subscription_rejects_missing_browser_keys(self):
+        self.client.force_authenticate(self.owner)
+        response = self.client.post(
+            '/api/community/push/subscribe/',
+            {
+                'endpoint': 'https://push.example.com/subscriptions/invalid',
+                'keys': {'p256dh': '', 'auth': ''},
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(PushSubscription.objects.count(), 0)
+
+    @override_settings(
+        VAPID_PUBLIC_KEY='public-vapid-key',
+        VAPID_PRIVATE_KEY='private-vapid-key',
+        VAPID_SUBJECT='mailto:test@example.com',
+    )
+    @patch('community.views.send_test_push', return_value={'sent': True})
+    def test_push_config_and_test_notification(self, mocked_send):
+        self.client.force_authenticate(self.owner)
+        subscription = PushSubscription.objects.create(
+            user=self.owner,
+            endpoint='https://push.example.com/subscriptions/test-device',
+            p256dh='public-browser-key',
+            auth='auth-secret',
+            is_active=True,
+        )
+
+        config = self.client.get('/api/community/push/config/')
+        self.assertEqual(config.status_code, 200)
+        self.assertTrue(config.data['enabled'])
+        self.assertEqual(config.data['public_key'], 'public-vapid-key')
+
+        sent = self.client.post(
+            '/api/community/push/test/',
+            {'endpoint': subscription.endpoint},
+            format='json',
+        )
+        self.assertEqual(sent.status_code, 200)
+        self.assertTrue(sent.data['sent'])
+        mocked_send.assert_called_once_with(subscription)
+
+    @patch('community.notification_utils.schedule_push_notification')
+    def test_social_activity_schedules_a_phone_push(self, mocked_schedule):
+        post = Post.objects.create(created_by=self.owner, pet=self.pet, text='Nueva foto')
+        self.client.force_authenticate(self.other)
+
+        response = self.client.post(f'/api/community/posts/{post.id}/react/')
+
+        self.assertEqual(response.status_code, 200)
+        notification = CommunityNotification.objects.get(
+            recipient=self.owner,
+            actor=self.other,
+            notification_type=CommunityNotification.TYPE_REACTION,
+        )
+        mocked_schedule.assert_called_once_with(notification)
+
+    @override_settings(
+        VAPID_PUBLIC_KEY='public-vapid-key',
+        VAPID_PRIVATE_KEY='private-vapid-key',
+        VAPID_SUBJECT='mailto:test@example.com',
+    )
+    @patch('community.push_utils.webpush')
+    def test_successful_push_updates_subscription_health(self, mocked_webpush):
+        from .push_utils import send_payload_to_subscription
+
+        subscription = PushSubscription.objects.create(
+            user=self.owner,
+            endpoint='https://push.example.com/subscriptions/healthy-device',
+            p256dh='public-browser-key',
+            auth='auth-secret',
+            failure_count=2,
+            is_active=True,
+        )
+
+        result = send_payload_to_subscription(
+            subscription,
+            {'title': 'VetPaw', 'body': 'Prueba', 'url': '/notifications'},
+        )
+
+        self.assertTrue(result['sent'])
+        subscription.refresh_from_db()
+        self.assertEqual(subscription.failure_count, 0)
+        self.assertIsNotNone(subscription.last_success_at)
+        self.assertTrue(subscription.is_active)
+        mocked_webpush.assert_called_once()

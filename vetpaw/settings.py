@@ -166,3 +166,10 @@ AXES_FAILURE_LIMIT = 5          # bloquea después de 5 intentos fallidos
 AXES_COOLOFF_TIME = 0.25        # bloqueo de 15 minutos (0.25 horas)
 AXES_LOCKOUT_CALLABLE = None
 AXES_RESET_ON_SUCCESS = True    # resetea el contador si el login es exitoso
+
+# Web Push / notificaciones al teléfono
+VAPID_PUBLIC_KEY = env('VAPID_PUBLIC_KEY', default='')
+VAPID_PRIVATE_KEY = env('VAPID_PRIVATE_KEY', default='')
+VAPID_SUBJECT = env('VAPID_SUBJECT', default='mailto:vetpaw.app@gmail.com')
+WEB_PUSH_TTL = env.int('WEB_PUSH_TTL', default=86400)
+WEB_PUSH_TIMEOUT = env.int('WEB_PUSH_TIMEOUT', default=5)

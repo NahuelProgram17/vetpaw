@@ -1,4 +1,5 @@
 import re
+from django.conf import settings
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -13,7 +14,7 @@ from clinics.models import Clinic
 from lost_pets.models import LostPet
 from pets.models import BirthdayCelebration, Pet
 
-from .models import BlockedUser, Comment, CommunityNotification, PetFollow, PetSocialProfile, Post, Reaction, Report, SavedPost
+from .models import BlockedUser, Comment, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report, SavedPost
 from .notification_utils import (
     create_comment_notification,
     create_follow_notification,
@@ -22,6 +23,7 @@ from .notification_utils import (
     remove_reaction_notification,
 )
 from .permissions import IsOwnerOrModerator, is_community_moderator
+from .push_utils import MAX_ACTIVE_SUBSCRIPTIONS, push_is_configured, send_test_push
 from .throttles import CommunityActionThrottle, CommunityCommentThrottle, CommunityPostThrottle
 from .serializers import (
     BlockedUserSerializer,
@@ -29,6 +31,8 @@ from .serializers import (
     CommunityNotificationSerializer,
     PetSocialProfileSerializer,
     PostSerializer,
+    PushSubscriptionInputSerializer,
+    PushSubscriptionSerializer,
     ReportSerializer,
     absolute_file_url,
 )
@@ -284,6 +288,121 @@ class CommunityNotificationViewSet(mixins.ListModelMixin, viewsets.GenericViewSe
             notification.read_at = timezone.now()
             notification.save(update_fields=['is_read', 'read_at', 'updated_at'])
         return Response(self.get_serializer(notification).data)
+
+
+class PushSubscriptionViewSet(viewsets.GenericViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_throttles(self):
+        if self.action in ('subscribe', 'unsubscribe', 'test'):
+            return [CommunityActionThrottle()]
+        return []
+
+    def get_permissions(self):
+        if self.action == 'config':
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
+
+    @action(detail=False, methods=['get'])
+    def config(self, request):
+        return Response({
+            'enabled': push_is_configured(),
+            'public_key': settings.VAPID_PUBLIC_KEY if push_is_configured() else '',
+        })
+
+    @action(detail=False, methods=['get'])
+    def status(self, request):
+        endpoint = (request.query_params.get('endpoint') or '').strip()
+        if not endpoint:
+            return Response({'active': False})
+        subscription = PushSubscription.objects.filter(
+            user=request.user,
+            endpoint=endpoint,
+            is_active=True,
+        ).first()
+        return Response({
+            'active': bool(subscription),
+            'subscription': (
+                PushSubscriptionSerializer(subscription).data if subscription else None
+            ),
+        })
+
+    @action(detail=False, methods=['post'])
+    def subscribe(self, request):
+        serializer = PushSubscriptionInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        keys = data['keys']
+
+        subscription, _ = PushSubscription.objects.update_or_create(
+            endpoint=data['endpoint'],
+            defaults={
+                'user': request.user,
+                'p256dh': keys['p256dh'],
+                'auth': keys['auth'],
+                'device_name': data.get('device_name', ''),
+                'user_agent': data.get('user_agent', '') or request.META.get('HTTP_USER_AGENT', '')[:500],
+                'is_active': True,
+                'failure_count': 0,
+                'last_failure_at': None,
+            },
+        )
+
+        stale_ids = list(
+            PushSubscription.objects.filter(
+                user=request.user,
+                is_active=True,
+            ).exclude(pk=subscription.pk).order_by('-updated_at').values_list('id', flat=True)[
+                MAX_ACTIVE_SUBSCRIPTIONS - 1:
+            ]
+        )
+        if stale_ids:
+            PushSubscription.objects.filter(id__in=stale_ids).update(is_active=False)
+
+        return Response(
+            PushSubscriptionSerializer(subscription).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=False, methods=['post'])
+    def unsubscribe(self, request):
+        endpoint = str(request.data.get('endpoint') or '').strip()
+        if not endpoint:
+            return Response(
+                {'error': 'Falta la suscripción del dispositivo.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        updated = PushSubscription.objects.filter(
+            user=request.user,
+            endpoint=endpoint,
+        ).update(is_active=False)
+        return Response({'unsubscribed': bool(updated)})
+
+    @action(detail=False, methods=['post'])
+    def test(self, request):
+        if not push_is_configured():
+            return Response(
+                {'error': 'Las notificaciones push todavía no están configuradas en el servidor.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        endpoint = str(request.data.get('endpoint') or '').strip()
+        subscription = PushSubscription.objects.filter(
+            user=request.user,
+            endpoint=endpoint,
+            is_active=True,
+        ).first()
+        if not subscription:
+            return Response(
+                {'error': 'Este dispositivo no está suscripto.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        result = send_test_push(subscription)
+        if not result.get('sent'):
+            return Response(
+                {'error': 'No pudimos enviar la prueba. Volvé a activar las notificaciones.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response({'sent': True})
 
 
 class ReportViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, viewsets.GenericViewSet):

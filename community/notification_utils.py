@@ -2,6 +2,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from .models import BlockedUser, CommunityNotification
+from .push_utils import schedule_push_notification
 
 
 def _can_notify(recipient, actor):
@@ -35,6 +36,7 @@ def create_reaction_notification(post, actor):
         notification.save(
             update_fields=['pet', 'is_read', 'read_at', 'created_at', 'updated_at']
         )
+    schedule_push_notification(notification)
     return notification
 
 
@@ -72,9 +74,10 @@ def create_comment_notification(post, actor, comment):
                 'comment', 'pet', 'extra_text', 'read_at', 'created_at', 'updated_at'
             ]
         )
+        schedule_push_notification(notification)
         return notification
 
-    return CommunityNotification.objects.create(
+    notification = CommunityNotification.objects.create(
         recipient=recipient,
         actor=actor,
         post=post,
@@ -83,6 +86,8 @@ def create_comment_notification(post, actor, comment):
         notification_type=CommunityNotification.TYPE_COMMENT,
         extra_text=preview,
     )
+    schedule_push_notification(notification)
+    return notification
 
 
 def create_follow_notification(pet, actor):
@@ -103,6 +108,7 @@ def create_follow_notification(pet, actor):
         notification.save(
             update_fields=['is_read', 'read_at', 'created_at', 'updated_at']
         )
+    schedule_push_notification(notification)
     return notification
 
 

@@ -6,7 +6,7 @@ from pets.models import Pet
 from vetpaw.image_validation import validate_uploaded_image
 from users.permissions import is_community_moderator
 
-from .models import BlockedUser, Comment, CommunityNotification, PetFollow, PetSocialProfile, Post, Reaction, Report, SavedPost
+from .models import BlockedUser, Comment, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report, SavedPost
 
 
 def absolute_file_url(request, field):
@@ -431,3 +431,29 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
         if obj.post_id:
             return 'post'
         return 'community'
+
+
+class PushSubscriptionInputSerializer(serializers.Serializer):
+    endpoint = serializers.URLField(max_length=4000)
+    keys = serializers.DictField()
+    device_name = serializers.CharField(max_length=120, required=False, allow_blank=True)
+    user_agent = serializers.CharField(max_length=500, required=False, allow_blank=True)
+
+    def validate_keys(self, value):
+        p256dh = str(value.get('p256dh') or '').strip()
+        auth = str(value.get('auth') or '').strip()
+        if not p256dh or not auth:
+            raise serializers.ValidationError('La suscripción no incluye sus claves de seguridad.')
+        if len(p256dh) > 1000 or len(auth) > 500:
+            raise serializers.ValidationError('Las claves de la suscripción no son válidas.')
+        return {'p256dh': p256dh, 'auth': auth}
+
+
+class PushSubscriptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PushSubscription
+        fields = [
+            'id', 'device_name', 'is_active', 'last_success_at',
+            'last_failure_at', 'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
