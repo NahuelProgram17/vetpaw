@@ -3,6 +3,7 @@ from django.contrib.auth.password_validation import validate_password
 from .models import User
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from vetpaw.image_validation import validate_uploaded_image
+from .permissions import is_community_moderator, is_vetpaw_admin
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -39,6 +40,9 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    can_access_admin = serializers.SerializerMethodField()
+    can_moderate_community = serializers.SerializerMethodField()
+
     def validate_avatar(self, value):
         return validate_uploaded_image(value, max_mb=3, label='La foto de perfil')
 
@@ -48,8 +52,18 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'username', 'email', 'first_name', 'last_name',
             'role', 'gender', 'phone', 'province', 'locality', 'avatar', 'bio',
             'created_at', 'is_approved', 'is_staff', 'is_superuser',
+            'can_access_admin', 'can_moderate_community',
         ]
-        read_only_fields = ['id', 'created_at', 'is_approved', 'is_staff', 'is_superuser']
+        read_only_fields = [
+            'id', 'created_at', 'is_approved', 'is_staff', 'is_superuser',
+            'can_access_admin', 'can_moderate_community',
+        ]
+
+    def get_can_access_admin(self, obj):
+        return is_vetpaw_admin(obj)
+
+    def get_can_moderate_community(self, obj):
+        return is_community_moderator(obj)
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):

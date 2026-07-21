@@ -1,3 +1,5 @@
+from secrets import token_urlsafe
+
 from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
@@ -17,7 +19,7 @@ class BirthdayCelebrationTests(TestCase):
         self.owner = User.objects.create_user(
             username='owner-birthday',
             email='owner-birthday@example.com',
-            password='test-pass-123',
+            password=token_urlsafe(24),
             role='owner',
         )
         today = timezone.localdate()
@@ -58,7 +60,7 @@ class PetPhotoUploadTests(TestCase):
         self.owner = User.objects.create_user(
             username='owner-photo',
             email='owner-photo@example.com',
-            password='test-pass-123',
+            password=token_urlsafe(24),
             role='owner',
         )
 

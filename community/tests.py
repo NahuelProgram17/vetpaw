@@ -1,5 +1,6 @@
 from secrets import token_urlsafe
 
+from django.contrib.auth.models import Group
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from rest_framework.test import APITestCase
@@ -34,6 +35,16 @@ class CommunityApiTests(APITestCase):
             role="owner",
             is_approved=True,
         )
+
+        self.moderator = User.objects.create_user(
+            username="moderator_test",
+            email="moderator@example.com",
+            password=token_urlsafe(24),
+            role="owner",
+            is_approved=True,
+        )
+        moderator_group, _ = Group.objects.get_or_create(name="community_moderators")
+        self.moderator.groups.add(moderator_group)
 
         self.pet = Pet.objects.create(
             owner=self.owner,
@@ -163,3 +174,50 @@ class CommunityApiTests(APITestCase):
             profile.data["name"],
             "Toby",
         )
+    def test_only_owner_or_moderator_can_delete_content(self):
+        post = Post.objects.create(created_by=self.owner, pet=self.pet, text="Contenido")
+        comment = Comment.objects.create(post=post, author=self.owner, text="Comentario")
+
+        self.client.force_authenticate(self.other)
+        self.assertEqual(self.client.delete(f"/api/community/posts/{post.id}/").status_code, 403)
+        self.assertEqual(self.client.delete(f"/api/community/comments/{comment.id}/").status_code, 403)
+
+        self.client.force_authenticate(self.moderator)
+        self.assertEqual(self.client.delete(f"/api/community/comments/{comment.id}/").status_code, 204)
+        self.assertEqual(self.client.delete(f"/api/community/posts/{post.id}/").status_code, 204)
+
+    def test_only_moderator_can_moderate_reports(self):
+        post = Post.objects.create(created_by=self.owner, pet=self.pet, text="Reportable")
+        report = Report.objects.create(reporter=self.other, post=post, reason=Report.REASON_SPAM)
+
+        self.client.force_authenticate(self.other)
+        denied = self.client.post(
+            f"/api/community/reports/{report.id}/moderate/",
+            {"decision": "hide", "notes": "No debería poder"},
+            format="json",
+        )
+        self.assertEqual(denied.status_code, 403)
+
+        self.client.force_authenticate(self.moderator)
+        allowed = self.client.post(
+            f"/api/community/reports/{report.id}/moderate/",
+            {"decision": "hide", "notes": "Contenido ocultado"},
+            format="json",
+        )
+        self.assertEqual(allowed.status_code, 200)
+        post.refresh_from_db()
+        report.refresh_from_db()
+        self.assertEqual(post.moderation_status, Post.STATUS_HIDDEN)
+        self.assertEqual(report.status, Report.STATUS_ACTIONED)
+        self.assertEqual(report.reviewed_by, self.moderator)
+
+    def test_private_pet_profile_is_hidden_from_other_users_but_visible_to_moderator(self):
+        profile = self.pet.social_profile
+        profile.is_public = False
+        profile.save(update_fields=["is_public"])
+
+        self.client.force_authenticate(self.other)
+        self.assertEqual(self.client.get(f"/api/community/pets/{self.pet.id}/").status_code, 404)
+
+        self.client.force_authenticate(self.moderator)
+        self.assertEqual(self.client.get(f"/api/community/pets/{self.pet.id}/").status_code, 200)

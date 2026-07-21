@@ -1,10 +1,24 @@
+# Entornos y caché de Python
 venv/
+.venv/
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+.pytest_cache/
+
+# Variables y secretos
 .env
+.env.*
+!.env.example
+
+# Archivos generados localmente
 media/
+test_media/
+staticfiles/
+test.sqlite3
+migration-test.sqlite3
 
-venv/
-
-.env
+# Sistema/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

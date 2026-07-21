@@ -4,6 +4,7 @@ from rest_framework.views import APIView
 from django.core.mail import EmailMultiAlternatives
 from django.conf import settings
 from .models import User
+from .permissions import is_vetpaw_admin
 from .serializers import RegisterSerializer, UserSerializer, CustomTokenObtainPairSerializer, RegisterClinicSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth.tokens import default_token_generator
@@ -150,7 +151,7 @@ class ApproveClinicView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, user_id):
-        if request.user.username != 'jaime17':
+        if not is_vetpaw_admin(request.user):
             return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
         try:
             user = User.objects.get(pk=user_id, role='clinic')
@@ -166,7 +167,7 @@ class RejectClinicView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, user_id):
-        if request.user.username != 'jaime17':
+        if not is_vetpaw_admin(request.user):
             return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
         try:
             user = User.objects.get(pk=user_id, role='clinic', is_approved=False)

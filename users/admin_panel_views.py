@@ -6,12 +6,11 @@ from django.utils import timezone
 from datetime import timedelta
 from django.db.models import Count
 
-
-ADMIN_USERNAME = 'jaime17'
+from .permissions import is_vetpaw_admin
 
 
 def is_admin(user):
-    return user.is_authenticated and user.username == ADMIN_USERNAME
+    return is_vetpaw_admin(user)
 
 
 def format_local_datetime(value):

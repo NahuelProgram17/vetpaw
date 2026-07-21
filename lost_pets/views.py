@@ -9,6 +9,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.utils import timezone
 from .models import LostPet
 from .serializers import LostPetSerializer
+from users.permissions import is_vetpaw_admin
 
 
 @api_view(['GET'])
@@ -49,10 +50,8 @@ def report_lost_pet(request, pk):
     pet.save()
     return Response({'message': 'Reporte enviado', 'report_count': pet.report_count})
 
-ADMIN_USERNAME = 'jaime17'
-
 def is_lost_pet_admin(user):
-    return user.is_authenticated and user.username == ADMIN_USERNAME
+    return is_vetpaw_admin(user)
 
 
 @api_view(['GET'])

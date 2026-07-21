@@ -1,12 +1,6 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
-
-def is_community_moderator(user):
-    return bool(
-        user
-        and user.is_authenticated
-        and (user.is_staff or user.is_superuser or user.username == 'jaime17')
-    )
+from users.permissions import is_community_moderator
 
 
 class IsOwnerOrModerator(BasePermission):

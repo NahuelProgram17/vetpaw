@@ -4,6 +4,7 @@ from rest_framework import serializers
 from clinics.models import Clinic
 from pets.models import Pet
 from vetpaw.image_validation import validate_uploaded_image
+from users.permissions import is_community_moderator
 
 from .models import BlockedUser, Comment, PetFollow, PetSocialProfile, Post, Reaction, Report, SavedPost
 
@@ -48,7 +49,7 @@ class CommentSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             return False
-        return obj.author_id == request.user.id or request.user.is_staff or request.user.username == 'jaime17'
+        return obj.author_id == request.user.id or is_community_moderator(request.user)
 
     def validate_text(self, value):
         value = value.strip()
@@ -222,7 +223,7 @@ class PostSerializer(serializers.ModelSerializer):
 
     def get_can_delete(self, obj):
         user = self._viewer()
-        return bool(user and (obj.created_by_id == user.id or user.is_staff or user.username == 'jaime17'))
+        return bool(user and (obj.created_by_id == user.id or is_community_moderator(user)))
 
     def get_lost_pet(self, obj):
         if not obj.related_lost_pet_id:
