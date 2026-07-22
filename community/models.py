@@ -25,12 +25,16 @@ class Post(models.Model):
     TYPE_BIRTHDAY = 'birthday'
     TYPE_LOST = 'lost'
     TYPE_CLINIC = 'clinic'
+    TYPE_BUSINESS = 'business'
+    TYPE_SHELTER = 'shelter'
     TYPE_ADOPTION = 'adoption'
     TYPE_CHOICES = [
         (TYPE_NORMAL, 'Publicación'),
         (TYPE_BIRTHDAY, 'Cumpleaños'),
         (TYPE_LOST, 'Mascota perdida/encontrada'),
         (TYPE_CLINIC, 'Veterinaria'),
+        (TYPE_BUSINESS, 'Negocio de mascotas'),
+        (TYPE_SHELTER, 'Refugio o rescatista'),
         (TYPE_ADOPTION, 'Adopción'),
     ]
 
@@ -59,6 +63,20 @@ class Post(models.Model):
     )
     clinic = models.ForeignKey(
         'clinics.Clinic',
+        on_delete=models.SET_NULL,
+        related_name='community_posts',
+        null=True,
+        blank=True,
+    )
+    business = models.ForeignKey(
+        'partners.BusinessProfile',
+        on_delete=models.SET_NULL,
+        related_name='community_posts',
+        null=True,
+        blank=True,
+    )
+    shelter = models.ForeignKey(
+        'partners.ShelterProfile',
         on_delete=models.SET_NULL,
         related_name='community_posts',
         null=True,
@@ -96,18 +114,32 @@ class Post(models.Model):
             models.Index(fields=['locality', '-created_at']),
             models.Index(fields=['pet', '-created_at']),
             models.Index(fields=['clinic', '-created_at']),
+            models.Index(fields=['business', '-created_at']),
+            models.Index(fields=['shelter', '-created_at']),
         ]
 
     def clean(self):
-        if self.pet_id and self.clinic_id:
-            raise ValidationError('Una publicación no puede pertenecer a una mascota y una veterinaria a la vez.')
-        if not self.pet_id and not self.clinic_id and not self.related_lost_pet_id:
-            raise ValidationError('La publicación debe tener una mascota, una veterinaria o un reporte asociado.')
+        actor_count = sum(bool(value) for value in (
+            self.pet_id, self.clinic_id, self.business_id, self.shelter_id,
+        ))
+        if actor_count > 1:
+            raise ValidationError('Una publicación solo puede pertenecer a un perfil de VetPaw.')
+        if actor_count == 0 and not self.related_lost_pet_id:
+            raise ValidationError('La publicación debe tener una mascota, veterinaria, negocio, refugio o reporte asociado.')
         if not self.text and not self.image and not self.related_lost_pet_id and not self.related_birthday_id:
             raise ValidationError('La publicación necesita texto o imagen.')
 
     def __str__(self):
-        actor = self.pet.name if self.pet_id else self.clinic.name if self.clinic_id else 'VetPaw'
+        if self.pet_id:
+            actor = self.pet.name
+        elif self.clinic_id:
+            actor = self.clinic.name
+        elif self.business_id:
+            actor = self.business.name
+        elif self.shelter_id:
+            actor = self.shelter.name
+        else:
+            actor = 'VetPaw'
         return f'{actor}: {self.text[:50]}'
 
 

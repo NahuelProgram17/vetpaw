@@ -10,6 +10,8 @@ class User(AbstractUser):
     ROLE_CHOICES = [
         ('owner', 'Dueño de mascota'),
         ('clinic', 'Veterinario/a'),
+        ('business', 'Negocio de mascotas'),
+        ('shelter', 'Refugio o rescatista'),
     ]
 
     role = models.CharField(
@@ -50,3 +52,11 @@ class User(AbstractUser):
     @property
     def is_clinic(self):
         return self.role == 'clinic'
+
+    @property
+    def is_business(self):
+        return self.role == 'business'
+
+    @property
+    def is_shelter(self):
+        return self.role == 'shelter'

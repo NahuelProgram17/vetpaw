@@ -10,6 +10,7 @@ from clinics.models import Clinic
 from rest_framework.test import APITestCase
 
 from pets.models import Pet
+from partners.models import BusinessProfile, ShelterProfile
 from users.models import User
 
 from .models import BlockedUser, Comment, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report
@@ -626,3 +627,81 @@ class CommunityApiTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertGreaterEqual(response.data['pagination']['total'], 2)
         self.assertEqual(response.data['results']['posts'][0]['id'], popular.id)
+
+
+    def test_business_and_shelter_can_publish_with_their_profiles(self):
+        business_user = User.objects.create_user(
+            username='business_community', email='business-community@example.com',
+            password=token_urlsafe(24), role='business', is_approved=True,
+        )
+        business = BusinessProfile.objects.create(
+            owner=business_user, name='Mundo Animal', business_type='petshop',
+            responsible_name='Ana', province='Buenos Aires', locality='Moreno',
+            species=['dog', 'cat'], services=['food'],
+        )
+        shelter_user = User.objects.create_user(
+            username='shelter_community', email='shelter-community@example.com',
+            password=token_urlsafe(24), role='shelter', is_approved=True,
+        )
+        shelter = ShelterProfile.objects.create(
+            owner=shelter_user, name='Patitas al Rescate', shelter_type='rescue',
+            responsible_name='Carla', province='Buenos Aires', locality='Merlo',
+            species=['dog'], activities=['rescue', 'adoption'],
+        )
+
+        self.client.force_authenticate(business_user)
+        business_post = self.client.post('/api/community/posts/', {'text': 'Nuevo alimento #NegociosVetPaw'}, format='multipart')
+        self.assertEqual(business_post.status_code, 201)
+        self.assertEqual(business_post.data['post_type'], Post.TYPE_BUSINESS)
+        self.assertEqual(business_post.data['actor']['type'], 'business')
+        self.assertEqual(business_post.data['actor']['name'], business.name)
+
+        self.client.force_authenticate(shelter_user)
+        shelter_post = self.client.post('/api/community/posts/', {'text': 'Buscamos hogar #Adopción'}, format='multipart')
+        self.assertEqual(shelter_post.status_code, 201)
+        self.assertEqual(shelter_post.data['post_type'], Post.TYPE_SHELTER)
+        self.assertEqual(shelter_post.data['actor']['type'], 'shelter')
+        self.assertEqual(shelter_post.data['actor']['name'], shelter.name)
+
+    def test_explore_includes_only_approved_businesses_and_shelters(self):
+        approved_user = User.objects.create_user(
+            username='approved_business', email='approved-business@example.com',
+            password=token_urlsafe(24), role='business', is_approved=True,
+        )
+        BusinessProfile.objects.create(
+            owner=approved_user, name='Alimentos Toby', business_type='food',
+            responsible_name='Ana', province='Buenos Aires', locality='Moreno',
+            species=['dog'], services=['food'], is_24h=True,
+        )
+        pending_user = User.objects.create_user(
+            username='pending_business', email='pending-business@example.com',
+            password=token_urlsafe(24), role='business', is_approved=False,
+        )
+        BusinessProfile.objects.create(
+            owner=pending_user, name='Negocio Pendiente', business_type='petshop',
+            responsible_name='Pedro', province='Buenos Aires', locality='Moreno',
+            species=['cat'], services=['accessories'],
+        )
+        shelter_user = User.objects.create_user(
+            username='approved_shelter', email='approved-shelter@example.com',
+            password=token_urlsafe(24), role='shelter', is_approved=True,
+        )
+        ShelterProfile.objects.create(
+            owner=shelter_user, name='Refugio Moreno', shelter_type='shelter',
+            responsible_name='Marta', province='Buenos Aires', locality='Moreno',
+            species=['dog'], activities=['rescue'], accepting_animals=True,
+        )
+
+        businesses = self.client.get('/api/community/explore/', {
+            'section': 'businesses', 'locality': 'Moreno', 'is_24h': 'true',
+        })
+        self.assertEqual(businesses.status_code, 200)
+        self.assertEqual(businesses.data['pagination']['total'], 1)
+        self.assertEqual(businesses.data['results']['businesses'][0]['name'], 'Alimentos Toby')
+
+        shelters = self.client.get('/api/community/explore/', {
+            'section': 'shelters', 'accepting_animals': 'true',
+        })
+        self.assertEqual(shelters.status_code, 200)
+        self.assertEqual(shelters.data['pagination']['total'], 1)
+        self.assertEqual(shelters.data['results']['shelters'][0]['name'], 'Refugio Moreno')

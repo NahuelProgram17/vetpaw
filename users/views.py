@@ -5,7 +5,7 @@ from django.core.mail import EmailMultiAlternatives
 from django.conf import settings
 from .models import User
 from .permissions import is_vetpaw_admin
-from .serializers import RegisterSerializer, UserSerializer, CustomTokenObtainPairSerializer, RegisterClinicSerializer
+from .serializers import (RegisterSerializer, UserSerializer, CustomTokenObtainPairSerializer, RegisterClinicSerializer, RegisterBusinessSerializer, RegisterShelterSerializer)
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
@@ -51,6 +51,36 @@ class RegisterClinicView(generics.CreateAPIView):
             user.save()
             clinic_data = getattr(user, '_clinic_data', {})
             Clinic.objects.create(owner=user, **clinic_data)
+
+
+class RegisterBusinessView(generics.CreateAPIView):
+    queryset = User.objects.all()
+    serializer_class = RegisterBusinessSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def perform_create(self, serializer):
+        from django.db import transaction
+        from partners.models import BusinessProfile
+        with transaction.atomic():
+            user = serializer.save()
+            user.is_approved = False
+            user.save(update_fields=['is_approved'])
+            BusinessProfile.objects.create(owner=user, **getattr(user, '_partner_profile_data', {}))
+
+
+class RegisterShelterView(generics.CreateAPIView):
+    queryset = User.objects.all()
+    serializer_class = RegisterShelterSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def perform_create(self, serializer):
+        from django.db import transaction
+        from partners.models import ShelterProfile
+        with transaction.atomic():
+            user = serializer.save()
+            user.is_approved = False
+            user.save(update_fields=['is_approved'])
+            ShelterProfile.objects.create(owner=user, **getattr(user, '_partner_profile_data', {}))
 
 
 class PasswordResetRequestView(APIView):
@@ -176,3 +206,34 @@ class RejectClinicView(APIView):
         username = user.username
         user.delete()
         return Response({'message': f'Solicitud de {username} rechazada y eliminada.'})
+
+
+class ApproveProfessionalProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, user_id):
+        if not is_vetpaw_admin(request.user):
+            return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            user = User.objects.get(pk=user_id, role__in=('clinic', 'business', 'shelter'))
+        except User.DoesNotExist:
+            return Response({'error': 'Perfil profesional no encontrado.'}, status=404)
+        user.is_approved = True
+        user.save(update_fields=['is_approved'])
+        return Response({'message': f'{user.username} fue aprobado correctamente.', 'user_id': user.id, 'role': user.role})
+
+
+class RejectProfessionalProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, user_id):
+        if not is_vetpaw_admin(request.user):
+            return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            user = User.objects.get(pk=user_id, role__in=('clinic', 'business', 'shelter'), is_approved=False)
+        except User.DoesNotExist:
+            return Response({'error': 'Perfil no encontrado o ya aprobado.'}, status=404)
+        username = user.username
+        role = user.role
+        user.delete()
+        return Response({'message': f'Solicitud de {username} rechazada y eliminada.', 'role': role})

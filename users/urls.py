@@ -3,8 +3,8 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     RegisterView, ProfileView,
     CustomTokenObtainPairView,
-    RegisterClinicView, PasswordResetRequestView, PasswordResetConfirmView,
-    ApproveClinicView, RejectClinicView,
+    RegisterClinicView, RegisterBusinessView, RegisterShelterView, PasswordResetRequestView, PasswordResetConfirmView,
+    ApproveClinicView, RejectClinicView, ApproveProfessionalProfileView, RejectProfessionalProfileView,
 )
 from .admin_panel_views import admin_panel
 
@@ -12,6 +12,8 @@ from .admin_panel_views import admin_panel
 urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
     path('register-clinic/', RegisterClinicView.as_view(), name='register-clinic'),
+    path('register-business/', RegisterBusinessView.as_view(), name='register-business'),
+    path('register-shelter/', RegisterShelterView.as_view(), name='register-shelter'),
     path('login/', CustomTokenObtainPairView.as_view(), name='login'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('profile/', ProfileView.as_view(), name='profile'),
@@ -20,4 +22,6 @@ urlpatterns = [
     path('admin-panel/', admin_panel, name='admin-panel'),
     path('admin/approve-clinic/<int:user_id>/', ApproveClinicView.as_view(), name='admin-approve-clinic'),
     path('admin/reject-clinic/<int:user_id>/', RejectClinicView.as_view(), name='admin-reject-clinic'),
+    path('admin/approve-profile/<int:user_id>/', ApproveProfessionalProfileView.as_view(), name='admin-approve-profile'),
+    path('admin/reject-profile/<int:user_id>/', RejectProfessionalProfileView.as_view(), name='admin-reject-profile'),
 ]

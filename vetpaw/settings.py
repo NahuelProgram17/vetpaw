@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'ads',
     'blog',
     'community.apps.CommunityConfig',
+    'partners.apps.PartnersConfig',
     'axes',
 ]
 

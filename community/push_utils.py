@@ -28,6 +28,14 @@ def _actor_name(notification):
         clinic = getattr(actor, 'clinic_profile', None)
         if clinic:
             return clinic.name
+    if actor.role == 'business':
+        business = getattr(actor, 'business_profile', None)
+        if business:
+            return business.name
+    if actor.role == 'shelter':
+        shelter = getattr(actor, 'shelter_profile', None)
+        if shelter:
+            return shelter.name
     return actor.get_full_name().strip() or actor.username
 
 
@@ -39,6 +47,10 @@ def _post_subject(notification):
         return f'la publicación de {post.pet.name}'
     if post.clinic_id:
         return 'tu publicación de la veterinaria'
+    if post.business_id:
+        return 'tu publicación del negocio'
+    if post.shelter_id:
+        return 'tu publicación del refugio'
     if post.related_lost_pet_id:
         return 'tu aviso de mascota perdida o encontrada'
     return 'tu publicación'

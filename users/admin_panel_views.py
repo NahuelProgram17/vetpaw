@@ -31,6 +31,7 @@ def admin_panel(request):
     from appointments.models import Appointment
     from pets.models import Pet
     from lost_pets.models import LostPet
+    from partners.models import BusinessProfile, ShelterProfile
 
     now = timezone.now()
     week_ago = now - timedelta(days=7)
@@ -39,12 +40,16 @@ def admin_panel(request):
     # ── Métricas globales ──
     total_owners   = User.objects.filter(role='owner').count()
     total_clinics  = User.objects.filter(role='clinic').count()
+    total_businesses = User.objects.filter(role='business').count()
+    total_shelters = User.objects.filter(role='shelter').count()
     total_pets     = Pet.objects.count()
     total_appts    = Appointment.objects.count()
     total_lost     = LostPet.objects.filter(expires_at__gt=now).count()
 
     new_owners_week  = User.objects.filter(role='owner',  date_joined__gte=week_ago).count()
     new_clinics_week = User.objects.filter(role='clinic', date_joined__gte=week_ago).count()
+    new_businesses_week = User.objects.filter(role='business', date_joined__gte=week_ago).count()
+    new_shelters_week = User.objects.filter(role='shelter', date_joined__gte=week_ago).count()
     new_appts_week   = Appointment.objects.filter(created_at__gte=week_ago).count()
 
     # ── Usuarios nuevos últimos 7 días ──
@@ -149,15 +154,41 @@ def admin_panel(request):
             'clinic_locality': clinic.locality if clinic else '',
         })
 
+    pending_profiles = []
+    for u in User.objects.filter(role__in=('business', 'shelter'), is_approved=False).order_by('-date_joined'):
+        profile = BusinessProfile.objects.filter(owner=u).first() if u.role == 'business' else ShelterProfile.objects.filter(owner=u).first()
+        pending_profiles.append({
+            'user_id': u.id,
+            'username': u.username,
+            'email': u.email,
+            'role': u.role,
+            'role_display': 'Negocio de mascotas' if u.role == 'business' else 'Refugio o rescatista',
+            'date_joined': format_local_datetime(u.date_joined),
+            'name': profile.name if profile else '—',
+            'profile_type': (
+                profile.get_business_type_display() if u.role == 'business' and profile
+                else profile.get_shelter_type_display() if profile
+                else ''
+            ),
+            'phone': profile.phone if profile else '',
+            'whatsapp': profile.whatsapp if profile else '',
+            'province': profile.province if profile else '',
+            'locality': profile.locality if profile else '',
+        })
+
     return Response({
         'global': {
             'total_owners':      total_owners,
             'total_clinics':     total_clinics,
             'total_pets':        total_pets,
+            'total_businesses':  total_businesses,
+            'total_shelters':    total_shelters,
             'total_appts':       total_appts,
             'total_lost_active': total_lost,
             'new_owners_week':   new_owners_week,
             'new_clinics_week':  new_clinics_week,
+            'new_businesses_week': new_businesses_week,
+            'new_shelters_week': new_shelters_week,
             'new_appts_week':    new_appts_week,
         },
         'new_users_by_day':  new_users,
@@ -167,4 +198,5 @@ def admin_panel(request):
         'last_users':        last_users_data,
         'security':          security_data,
         'pending_clinics':   pending_clinics_data,
+        'pending_profiles':  pending_profiles,
     })

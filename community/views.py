@@ -13,6 +13,7 @@ from rest_framework.response import Response
 from clinics.models import Clinic
 from lost_pets.models import LostPet
 from pets.models import BirthdayCelebration, Pet
+from partners.models import BusinessProfile, ShelterProfile
 
 from .models import BlockedUser, Comment, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report, SavedPost
 from .notification_utils import (
@@ -71,8 +72,13 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
             moderation_status=Post.STATUS_PUBLISHED,
         ).filter(
             Q(related_lost_pet__isnull=True) | Q(related_lost_pet__expires_at__gt=timezone.now())
+        ).filter(
+            Q(business__isnull=True) | Q(business__is_active=True, business__owner__is_approved=True)
+        ).filter(
+            Q(shelter__isnull=True) | Q(shelter__is_active=True, shelter__owner__is_approved=True)
         ).select_related(
             'created_by', 'pet__owner', 'pet__social_profile', 'clinic__owner',
+            'business__owner', 'shelter__owner',
             'related_lost_pet__owner', 'related_birthday__pet',
         ).prefetch_related('comments__author').annotate(
             reactions_total=Count('reactions', distinct=True),
@@ -107,6 +113,12 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
         clinic_id = request.query_params.get('clinic')
         if clinic_id:
             queryset = queryset.filter(clinic_id=clinic_id)
+        business_id = request.query_params.get('business')
+        if business_id:
+            queryset = queryset.filter(business_id=business_id)
+        shelter_id = request.query_params.get('shelter')
+        if shelter_id:
+            queryset = queryset.filter(shelter_id=shelter_id)
         locality = request.query_params.get('locality')
         if locality:
             queryset = queryset.filter(locality__icontains=locality)
@@ -125,6 +137,8 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
                 Q(text__icontains=search)
                 | Q(pet__name__icontains=search)
                 | Q(clinic__name__icontains=search)
+                | Q(business__name__icontains=search)
+                | Q(shelter__name__icontains=search)
                 | Q(related_lost_pet__pet_name__icontains=search)
             )
         return queryset.order_by('-created_at')
@@ -255,8 +269,9 @@ class CommunityNotificationViewSet(mixins.ListModelMixin, viewsets.GenericViewSe
         queryset = CommunityNotification.objects.filter(
             recipient=self.request.user
         ).select_related(
-            'actor', 'actor__clinic_profile', 'pet', 'post__pet',
-            'post__clinic', 'post__related_lost_pet', 'comment',
+            'actor', 'actor__clinic_profile', 'actor__business_profile', 'actor__shelter_profile',
+            'pet', 'post__pet', 'post__clinic', 'post__business', 'post__shelter',
+            'post__related_lost_pet', 'comment',
         )
         unread = self.request.query_params.get('unread')
         if unread in ('1', 'true', 'True'):
@@ -509,6 +524,14 @@ def community_discover(request):
         posts_total=Count('community_posts', filter=Q(community_posts__moderation_status=Post.STATUS_PUBLISHED), distinct=True)
     ).order_by('-posts_total', '-created_at')[:5]
 
+    businesses = BusinessProfile.objects.filter(is_active=True, owner__is_approved=True).exclude(owner_id__in=blocked_ids).select_related('owner').annotate(
+        posts_total=Count('community_posts', filter=Q(community_posts__moderation_status=Post.STATUS_PUBLISHED), distinct=True)
+    ).order_by('-is_verified', '-posts_total', '-created_at')[:5]
+
+    shelters = ShelterProfile.objects.filter(is_active=True, owner__is_approved=True).exclude(owner_id__in=blocked_ids).select_related('owner').annotate(
+        posts_total=Count('community_posts', filter=Q(community_posts__moderation_status=Post.STATUS_PUBLISHED), distinct=True)
+    ).order_by('-is_verified', '-posts_total', '-created_at')[:5]
+
     lost = LostPet.objects.filter(expires_at__gt=timezone.now()).order_by('-created_at')[:5]
     birthdays = BirthdayCelebration.objects.filter(
         birthday_date__gte=timezone.localdate() - timedelta(days=2),
@@ -543,6 +566,36 @@ def community_discover(request):
                 'posts_count': clinic.posts_total,
             }
             for clinic in clinics
+        ],
+        'businesses': [
+            {
+                'id': item.id,
+                'name': item.name,
+                'slug': item.slug,
+                'logo': absolute_file_url(request, item.logo),
+                'locality': item.locality,
+                'province': item.province,
+                'type_display': item.get_business_type_display(),
+                'is_verified': item.is_verified,
+                'posts_count': item.posts_total,
+            }
+            for item in businesses
+        ],
+        'shelters': [
+            {
+                'id': item.id,
+                'name': item.name,
+                'slug': item.slug,
+                'logo': absolute_file_url(request, item.logo),
+                'locality': item.locality,
+                'province': item.province,
+                'type_display': item.get_shelter_type_display(),
+                'capacity_status': item.capacity_status,
+                'capacity_status_display': item.get_capacity_status_display(),
+                'is_verified': item.is_verified,
+                'posts_count': item.posts_total,
+            }
+            for item in shelters
         ],
         'lost_pets': [
             {

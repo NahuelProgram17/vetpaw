@@ -3,6 +3,7 @@ from rest_framework import serializers
 
 from clinics.models import Clinic
 from pets.models import Pet
+from partners.models import BusinessProfile, ShelterProfile
 from vetpaw.image_validation import validate_uploaded_image
 from users.permissions import is_community_moderator
 
@@ -134,6 +135,36 @@ class PostSerializer(serializers.ModelSerializer):
                 locality=clinic.locality,
                 **validated_data,
             )
+        if user.role == 'business':
+            try:
+                business = user.business_profile
+            except BusinessProfile.DoesNotExist:
+                raise serializers.ValidationError('No tenés un negocio asociado.')
+            if not business.is_active:
+                raise serializers.ValidationError('Tu negocio no está activo.')
+            return Post.objects.create(
+                created_by=user,
+                business=business,
+                post_type=Post.TYPE_BUSINESS,
+                province=business.province,
+                locality=business.locality,
+                **validated_data,
+            )
+        if user.role == 'shelter':
+            try:
+                shelter = user.shelter_profile
+            except ShelterProfile.DoesNotExist:
+                raise serializers.ValidationError('No tenés un refugio asociado.')
+            if not shelter.is_active:
+                raise serializers.ValidationError('Tu refugio no está activo.')
+            return Post.objects.create(
+                created_by=user,
+                shelter=shelter,
+                post_type=Post.TYPE_SHELTER,
+                province=shelter.province,
+                locality=shelter.locality,
+                **validated_data,
+            )
         raise serializers.ValidationError('Tipo de cuenta no habilitado para publicar.')
 
     def get_actor(self, obj):
@@ -163,6 +194,30 @@ class PostSerializer(serializers.ModelSerializer):
                 'profile_url': f'/clinicas/{clinic.slug}',
                 'verified': True,
                 'owner_user_id': clinic.owner_id,
+            }
+        if obj.business_id:
+            business = obj.business
+            return {
+                'type': 'business',
+                'id': business.id,
+                'name': business.name,
+                'subtitle': ' · '.join(filter(None, [business.get_business_type_display(), business.locality])),
+                'photo': absolute_file_url(request, business.logo),
+                'profile_url': f'/negocios/{business.slug}',
+                'verified': business.is_verified,
+                'owner_user_id': business.owner_id,
+            }
+        if obj.shelter_id:
+            shelter = obj.shelter
+            return {
+                'type': 'shelter',
+                'id': shelter.id,
+                'name': shelter.name,
+                'subtitle': ' · '.join(filter(None, [shelter.get_shelter_type_display(), shelter.locality])),
+                'photo': absolute_file_url(request, shelter.logo),
+                'profile_url': f'/refugios/{shelter.slug}',
+                'verified': shelter.is_verified,
+                'owner_user_id': shelter.owner_id,
             }
         if obj.related_lost_pet_id:
             lost = obj.related_lost_pet
@@ -321,7 +376,7 @@ class PetSocialProfileSerializer(serializers.ModelSerializer):
 
     def get_recent_posts(self, obj):
         posts = obj.pet.community_posts.filter(moderation_status=Post.STATUS_PUBLISHED, is_public=True).select_related(
-            'pet__owner', 'pet__social_profile', 'clinic', 'related_lost_pet', 'related_birthday'
+            'pet__owner', 'pet__social_profile', 'clinic', 'business', 'shelter', 'related_lost_pet', 'related_birthday'
         )[:20]
         return PostSerializer(posts, many=True, context=self.context).data
 
@@ -397,6 +452,14 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
             clinic = getattr(obj.actor, 'clinic_profile', None)
             if clinic:
                 return clinic.name
+        if obj.actor.role == 'business':
+            business = getattr(obj.actor, 'business_profile', None)
+            if business:
+                return business.name
+        if obj.actor.role == 'shelter':
+            shelter = getattr(obj.actor, 'shelter_profile', None)
+            if shelter:
+                return shelter.name
         return obj.actor.get_full_name().strip() or obj.actor.username
 
     def _post_subject(self, obj):
@@ -404,6 +467,10 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
             return f'la publicación de {obj.post.pet.name}'
         if obj.post_id and obj.post.clinic_id:
             return 'tu publicación de la veterinaria'
+        if obj.post_id and obj.post.business_id:
+            return 'tu publicación del negocio'
+        if obj.post_id and obj.post.shelter_id:
+            return 'tu publicación del refugio'
         if obj.post_id and obj.post.related_lost_pet_id:
             return 'tu aviso de mascota perdida o encontrada'
         return 'tu publicación'

@@ -13,13 +13,14 @@ from rest_framework.response import Response
 from clinics.models import Clinic
 from lost_pets.models import LostPet
 from pets.models import Pet
+from partners.models import BusinessProfile, ShelterProfile
 
 from .models import BlockedUser, Comment, PetFollow, Post
 from .serializers import PostSerializer, absolute_file_url
 from .throttles import CommunityExploreThrottle
 
 HASHTAG_RE = re.compile(r"#([\w-]{2,50})", flags=re.UNICODE)
-ALLOWED_SECTIONS = {'all', 'pets', 'posts', 'clinics', 'hashtags', 'lost'}
+ALLOWED_SECTIONS = {'all', 'pets', 'posts', 'clinics', 'businesses', 'shelters', 'hashtags', 'lost'}
 ALLOWED_SORTS = {'recent', 'popular'}
 
 SEARCH_STOPWORDS = {'en', 'de', 'del', 'la', 'las', 'el', 'los', 'y', 'con'}
@@ -122,6 +123,51 @@ def _clinic_payload(request, clinic):
     }
 
 
+def _business_payload(request, item):
+    return {
+        'id': item.id,
+        'kind': 'business',
+        'name': item.name,
+        'slug': item.slug,
+        'type': item.business_type,
+        'type_display': item.get_business_type_display(),
+        'description': item.description[:220],
+        'logo': absolute_file_url(request, item.logo),
+        'locality': item.locality,
+        'province': item.province,
+        'is_24h': item.is_24h,
+        'home_service': item.home_service,
+        'delivery': item.delivery,
+        'services': (item.services if isinstance(item.services, list) else [])[:5],
+        'is_verified': item.is_verified,
+        'posts_count': getattr(item, 'posts_total', 0),
+        'profile_url': f'/negocios/{item.slug}',
+    }
+
+
+def _shelter_payload(request, item):
+    return {
+        'id': item.id,
+        'kind': 'shelter',
+        'name': item.name,
+        'slug': item.slug,
+        'type': item.shelter_type,
+        'type_display': item.get_shelter_type_display(),
+        'description': item.description[:220],
+        'logo': absolute_file_url(request, item.logo),
+        'locality': item.locality,
+        'province': item.province,
+        'capacity_status': item.capacity_status,
+        'capacity_status_display': item.get_capacity_status_display(),
+        'accepting_animals': item.accepting_animals,
+        'needs_foster_homes': item.needs_foster_homes,
+        'needs_volunteers': item.needs_volunteers,
+        'is_verified': item.is_verified,
+        'posts_count': getattr(item, 'posts_total', 0),
+        'profile_url': f'/refugios/{item.slug}',
+    }
+
+
 def _lost_payload(request, item):
     return {
         'id': item.id,
@@ -162,7 +208,7 @@ def _hashtag_rows(posts_queryset, query='', limit=500):
     return rows
 
 
-def _build_suggestions(pets, clinics, hashtags, posts, limit=8):
+def _build_suggestions(pets, clinics, businesses, shelters, hashtags, posts, limit=10):
     suggestions = []
     for pet in pets[:3]:
         suggestions.append({
@@ -175,6 +221,18 @@ def _build_suggestions(pets, clinics, hashtags, posts, limit=8):
             'kind': 'clinic', 'id': clinic['id'], 'title': clinic['name'],
             'subtitle': ' · '.join(filter(None, [clinic['locality'], clinic['province']])),
             'image': clinic['logo'], 'target_url': clinic['profile_url'],
+        })
+    for item in businesses[:2]:
+        suggestions.append({
+            'kind': 'business', 'id': item['id'], 'title': item['name'],
+            'subtitle': ' · '.join(filter(None, [item['type_display'], item['locality']])),
+            'image': item['logo'], 'target_url': item['profile_url'],
+        })
+    for item in shelters[:2]:
+        suggestions.append({
+            'kind': 'shelter', 'id': item['id'], 'title': item['name'],
+            'subtitle': ' · '.join(filter(None, [item['type_display'], item['locality']])),
+            'image': item['logo'], 'target_url': item['profile_url'],
         })
     for tag in hashtags[:2]:
         suggestions.append({
@@ -319,14 +377,83 @@ def community_explore(request):
     clinic_order = ('-same_locality', '-posts_total', '-created_at') if sort == 'popular' else ('-same_locality', '-created_at')
     clinics = clinics.order_by(*clinic_order)
 
+    businesses = BusinessProfile.objects.filter(is_active=True, owner__is_approved=True).select_related('owner').annotate(
+        services_search=Cast('services', TextField()),
+        posts_total=Count(
+            'community_posts',
+            filter=Q(community_posts__moderation_status=Post.STATUS_PUBLISHED, community_posts__is_public=True),
+            distinct=True,
+        )
+    )
+    if blocked_ids:
+        businesses = businesses.exclude(owner_id__in=blocked_ids)
+    if query_terms:
+        for term in query_terms:
+            businesses = businesses.filter(
+                Q(name__icontains=term) | Q(description__icontains=term)
+                | Q(locality__icontains=term) | Q(province__icontains=term)
+                | Q(business_type__icontains=term) | Q(services_search__icontains=term)
+            )
+    if locality:
+        businesses = businesses.filter(locality__icontains=locality)
+    if province:
+        businesses = businesses.filter(province__icontains=province)
+    if only_24h:
+        businesses = businesses.filter(is_24h=True)
+    business_type = _clean(request.query_params.get('business_type'), 30)
+    if business_type in dict(BusinessProfile.BUSINESS_TYPE_CHOICES):
+        businesses = businesses.filter(business_type=business_type)
+    if request.user.is_authenticated and request.user.locality:
+        businesses = businesses.annotate(same_locality=Case(When(locality__iexact=request.user.locality, then=Value(1)), default=Value(0), output_field=IntegerField()))
+    else:
+        businesses = businesses.annotate(same_locality=Value(0, output_field=IntegerField()))
+    businesses = businesses.order_by('-same_locality', '-is_verified', '-posts_total', '-created_at') if sort == 'popular' else businesses.order_by('-same_locality', '-created_at')
+
+    shelters = ShelterProfile.objects.filter(is_active=True, owner__is_approved=True).select_related('owner').annotate(
+        activities_search=Cast('activities', TextField()),
+        posts_total=Count(
+            'community_posts',
+            filter=Q(community_posts__moderation_status=Post.STATUS_PUBLISHED, community_posts__is_public=True),
+            distinct=True,
+        )
+    )
+    if blocked_ids:
+        shelters = shelters.exclude(owner_id__in=blocked_ids)
+    if query_terms:
+        for term in query_terms:
+            shelters = shelters.filter(
+                Q(name__icontains=term) | Q(description__icontains=term)
+                | Q(locality__icontains=term) | Q(province__icontains=term)
+                | Q(shelter_type__icontains=term) | Q(activities_search__icontains=term)
+            )
+    if locality:
+        shelters = shelters.filter(locality__icontains=locality)
+    if province:
+        shelters = shelters.filter(province__icontains=province)
+    shelter_type = _clean(request.query_params.get('shelter_type'), 30)
+    if shelter_type in dict(ShelterProfile.SHELTER_TYPE_CHOICES):
+        shelters = shelters.filter(shelter_type=shelter_type)
+    accepting_only = _clean(request.query_params.get('accepting_animals'), 10).lower() in ('1', 'true', 'yes')
+    if accepting_only:
+        shelters = shelters.filter(accepting_animals=True)
+    if request.user.is_authenticated and request.user.locality:
+        shelters = shelters.annotate(same_locality=Case(When(locality__iexact=request.user.locality, then=Value(1)), default=Value(0), output_field=IntegerField()))
+    else:
+        shelters = shelters.annotate(same_locality=Value(0, output_field=IntegerField()))
+    shelters = shelters.order_by('-same_locality', '-is_verified', '-posts_total', '-created_at') if sort == 'popular' else shelters.order_by('-same_locality', '-created_at')
+
     posts = Post.objects.filter(
         is_public=True,
         moderation_status=Post.STATUS_PUBLISHED,
     ).filter(
         Q(related_lost_pet__isnull=True) | Q(related_lost_pet__expires_at__gt=timezone.now())
+    ).filter(
+        Q(business__isnull=True) | Q(business__is_active=True, business__owner__is_approved=True)
+    ).filter(
+        Q(shelter__isnull=True) | Q(shelter__is_active=True, shelter__owner__is_approved=True)
     ).select_related(
         'created_by', 'pet__owner', 'pet__social_profile', 'clinic__owner',
-        'related_lost_pet__owner', 'related_birthday__pet',
+        'business__owner', 'shelter__owner', 'related_lost_pet__owner', 'related_birthday__pet',
     ).prefetch_related('comments__author').annotate(
         reactions_total=Count('reactions', distinct=True),
         comments_total=Count(
@@ -345,6 +472,8 @@ def community_explore(request):
                 | Q(pet__name__icontains=term)
                 | Q(pet__breed__icontains=term)
                 | Q(clinic__name__icontains=term)
+                | Q(business__name__icontains=term)
+                | Q(shelter__name__icontains=term)
                 | Q(locality__icontains=term)
                 | Q(province__icontains=term)
                 | Q(related_lost_pet__pet_name__icontains=term)
@@ -417,19 +546,25 @@ def community_explore(request):
         'pets': pets.count(),
         'posts': posts.count(),
         'clinics': clinics.count(),
+        'businesses': businesses.count(),
+        'shelters': shelters.count(),
         'hashtags': len(hashtag_rows),
         'lost': lost.count(),
     }
-    results = {'pets': [], 'posts': [], 'clinics': [], 'hashtags': [], 'lost_pets': []}
+    results = {'pets': [], 'posts': [], 'clinics': [], 'businesses': [], 'shelters': [], 'hashtags': [], 'lost_pets': []}
     pagination = None
 
     if section == 'all':
         pet_rows = list(pets[:all_limit])
         clinic_rows = list(clinics[:all_limit])
+        business_rows = list(businesses[:all_limit])
+        shelter_rows = list(shelters[:all_limit])
         post_rows = list(posts[:all_limit])
         lost_rows = list(lost[:min(all_limit, 6)])
         results['pets'] = [_pet_payload(request, item) for item in pet_rows]
         results['clinics'] = [_clinic_payload(request, item) for item in clinic_rows]
+        results['businesses'] = [_business_payload(request, item) for item in business_rows]
+        results['shelters'] = [_shelter_payload(request, item) for item in shelter_rows]
         results['posts'] = PostSerializer(post_rows, many=True, context={'request': request}).data
         results['hashtags'] = hashtag_rows[:all_limit]
         results['lost_pets'] = [_lost_payload(request, item) for item in lost_rows]
@@ -439,6 +574,12 @@ def community_explore(request):
     elif section == 'clinics':
         rows, pagination = _paginate(clinics, page, page_size)
         results['clinics'] = [_clinic_payload(request, item) for item in rows]
+    elif section == 'businesses':
+        rows, pagination = _paginate(businesses, page, page_size)
+        results['businesses'] = [_business_payload(request, item) for item in rows]
+    elif section == 'shelters':
+        rows, pagination = _paginate(shelters, page, page_size)
+        results['shelters'] = [_shelter_payload(request, item) for item in rows]
     elif section == 'posts':
         rows, pagination = _paginate(posts, page, page_size)
         results['posts'] = PostSerializer(rows, many=True, context={'request': request}).data
@@ -461,10 +602,14 @@ def community_explore(request):
     if query:
         suggestion_pets = [_pet_payload(request, item) for item in list(pets[:3])]
         suggestion_clinics = [_clinic_payload(request, item) for item in list(clinics[:2])]
+        suggestion_businesses = [_business_payload(request, item) for item in list(businesses[:2])]
+        suggestion_shelters = [_shelter_payload(request, item) for item in list(shelters[:2])]
         suggestion_posts = PostSerializer(list(posts[:1]), many=True, context={'request': request}).data
         suggestions = _build_suggestions(
             suggestion_pets,
             suggestion_clinics,
+            suggestion_businesses,
+            suggestion_shelters,
             hashtag_rows[:2],
             suggestion_posts,
         )
@@ -490,6 +635,9 @@ def community_explore(request):
             'locality': locality,
             'province': province,
             'is_24h': only_24h,
+            'business_type': business_type,
+            'shelter_type': shelter_type,
+            'accepting_animals': accepting_only,
         },
         'counts': counts,
         'results': results,
@@ -497,6 +645,8 @@ def community_explore(request):
         'suggestions': suggestions,
         'trending_hashtags': trending_hashtags,
         'popular_localities': popular_localities,
+        'business_type_options': [{'value': value, 'label': label} for value, label in BusinessProfile.BUSINESS_TYPE_CHOICES],
+        'shelter_type_options': [{'value': value, 'label': label} for value, label in ShelterProfile.SHELTER_TYPE_CHOICES],
         'species_options': [
             {'value': value, 'label': label}
             for value, label in Pet.SPECIES_CHOICES
