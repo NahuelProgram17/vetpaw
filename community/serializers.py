@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -7,7 +9,7 @@ from partners.models import BusinessProfile, ShelterProfile
 from vetpaw.image_validation import validate_uploaded_image
 from users.permissions import is_community_moderator
 
-from .models import BlockedUser, Comment, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report, SavedPost
+from .models import BlockedUser, Comment, CommentReaction, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report, SavedPost
 
 
 def absolute_file_url(request, field):
@@ -37,26 +39,83 @@ class CommunityUserSerializer(serializers.Serializer):
         return absolute_file_url(self.context.get('request'), obj.avatar)
 
 
-class CommentSerializer(serializers.ModelSerializer):
+class CommentReplySerializer(serializers.ModelSerializer):
     author = CommunityUserSerializer(read_only=True)
+    can_edit = serializers.SerializerMethodField()
     can_delete = serializers.SerializerMethodField()
+    is_edited = serializers.SerializerMethodField()
+    reactions_count = serializers.SerializerMethodField()
+    reacted_by_me = serializers.SerializerMethodField()
 
     class Meta:
         model = Comment
-        fields = ['id', 'post', 'author', 'text', 'created_at', 'updated_at', 'can_delete']
-        read_only_fields = ['id', 'post', 'author', 'created_at', 'updated_at', 'can_delete']
+        fields = [
+            'id', 'post', 'author', 'parent', 'text', 'created_at', 'updated_at',
+            'is_edited', 'can_edit', 'can_delete', 'reactions_count', 'reacted_by_me',
+        ]
+        read_only_fields = [
+            'id', 'post', 'author', 'parent', 'created_at', 'updated_at', 'is_edited',
+            'can_edit', 'can_delete', 'reactions_count', 'reacted_by_me',
+        ]
 
-    def get_can_delete(self, obj):
+    def _can_manage(self, obj):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             return False
         return obj.author_id == request.user.id or is_community_moderator(request.user)
+
+    def get_can_edit(self, obj):
+        return self._can_manage(obj)
+
+    def get_can_delete(self, obj):
+        return self._can_manage(obj)
+
+    def get_is_edited(self, obj):
+        return bool(obj.updated_at and obj.created_at and obj.updated_at > obj.created_at + timedelta(seconds=1))
+
+    def get_reactions_count(self, obj):
+        return getattr(obj, 'reactions_total', None) if getattr(obj, 'reactions_total', None) is not None else obj.reactions.count()
+
+    def get_reacted_by_me(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        reacted_ids = self.context.get('reacted_comment_ids')
+        if reacted_ids is not None:
+            return obj.id in reacted_ids
+        return CommentReaction.objects.filter(comment=obj, user=request.user).exists()
 
     def validate_text(self, value):
         value = value.strip()
         if not value:
             raise serializers.ValidationError('Escribí un comentario.')
         return value
+
+
+class CommentSerializer(CommentReplySerializer):
+    replies = serializers.SerializerMethodField()
+    replies_count = serializers.SerializerMethodField()
+
+    class Meta(CommentReplySerializer.Meta):
+        fields = CommentReplySerializer.Meta.fields + ['replies_count', 'replies']
+        read_only_fields = CommentReplySerializer.Meta.read_only_fields + ['replies_count', 'replies']
+
+    def get_replies(self, obj):
+        rows = getattr(obj, '_visible_replies', None)
+        if rows is None:
+            rows = obj.replies.filter(moderation_status=Comment.STATUS_PUBLISHED).select_related('author')
+            request = self.context.get('request')
+            if request and request.user.is_authenticated:
+                blocked = BlockedUser.objects.filter(blocker=request.user).values_list('blocked_id', flat=True)
+                blockers = BlockedUser.objects.filter(blocked=request.user).values_list('blocker_id', flat=True)
+                rows = rows.exclude(author_id__in=list(blocked) + list(blockers))
+        return CommentReplySerializer(rows, many=True, context=self.context).data
+
+    def get_replies_count(self, obj):
+        rows = getattr(obj, '_visible_replies', None)
+        if rows is not None:
+            return len(rows)
+        return obj.replies.filter(moderation_status=Comment.STATUS_PUBLISHED).count()
 
 
 class PostSerializer(serializers.ModelSerializer):
@@ -67,6 +126,8 @@ class PostSerializer(serializers.ModelSerializer):
     comments_preview = serializers.SerializerMethodField()
     reacted_by_me = serializers.SerializerMethodField()
     saved_by_me = serializers.SerializerMethodField()
+    can_edit = serializers.SerializerMethodField()
+    is_edited = serializers.SerializerMethodField()
     following_actor = serializers.SerializerMethodField()
     can_delete = serializers.SerializerMethodField()
     lost_pet = serializers.SerializerMethodField()
@@ -75,29 +136,32 @@ class PostSerializer(serializers.ModelSerializer):
     class Meta:
         model = Post
         fields = [
-            'id', 'post_type', 'text', 'image', 'image_url', 'province', 'locality',
+            'id', 'post_type', 'text', 'image', 'image_url', 'shares_count', 'province', 'locality',
             'actor', 'reactions_count', 'comments_count', 'comments_preview',
-            'reacted_by_me', 'saved_by_me', 'following_actor', 'can_delete',
+            'reacted_by_me', 'saved_by_me', 'can_edit', 'is_edited', 'following_actor', 'can_delete',
             'lost_pet', 'birthday', 'created_at', 'updated_at',
         ]
         extra_kwargs = {'image': {'write_only': True, 'required': False, 'allow_null': True}}
         read_only_fields = [
             'id', 'post_type', 'actor', 'image_url', 'reactions_count', 'comments_count',
-            'comments_preview', 'reacted_by_me', 'saved_by_me', 'following_actor',
-            'can_delete', 'lost_pet', 'birthday', 'province', 'locality', 'created_at', 'updated_at',
+            'comments_preview', 'reacted_by_me', 'saved_by_me', 'can_edit', 'is_edited', 'following_actor',
+            'can_delete', 'lost_pet', 'birthday', 'shares_count', 'province', 'locality', 'created_at', 'updated_at',
         ]
 
     def validate(self, attrs):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             raise serializers.ValidationError('Necesitás iniciar sesión para publicar.')
-        text = (attrs.get('text') or '').strip()
-        image = attrs.get('image')
+        text_value = attrs.get('text', self.instance.text if self.instance else '')
+        text = (text_value or '').strip()
+        image = attrs.get('image', self.instance.image if self.instance else None)
         if not text and not image:
             raise serializers.ValidationError('Agregá un texto o una foto.')
-        if image:
-            validate_uploaded_image(image, max_mb=5, label='La foto')
-        attrs['text'] = text
+        uploaded_image = attrs.get('image')
+        if uploaded_image:
+            validate_uploaded_image(uploaded_image, max_mb=5, label='La foto')
+        if 'text' in attrs or not self.instance:
+            attrs['text'] = text
         return attrs
 
     def create(self, validated_data):
@@ -167,6 +231,15 @@ class PostSerializer(serializers.ModelSerializer):
             )
         raise serializers.ValidationError('Tipo de cuenta no habilitado para publicar.')
 
+    def get_can_edit(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        return obj.created_by_id == request.user.id or is_community_moderator(request.user)
+
+    def get_is_edited(self, obj):
+        return bool(obj.updated_at and obj.created_at and obj.updated_at > obj.created_at + timedelta(seconds=1))
+
     def get_actor(self, obj):
         from .social_profiles import identity_for_target
         request = self.context.get('request')
@@ -210,7 +283,7 @@ class PostSerializer(serializers.ModelSerializer):
         return getattr(obj, 'comments_total', None) if hasattr(obj, 'comments_total') else obj.comments.filter(moderation_status=Comment.STATUS_PUBLISHED).count()
 
     def get_comments_preview(self, obj):
-        queryset = obj.comments.filter(moderation_status=Comment.STATUS_PUBLISHED).select_related('author')
+        queryset = obj.comments.filter(moderation_status=Comment.STATUS_PUBLISHED, parent__isnull=True).select_related('author')
         request = self.context.get('request')
         if request and request.user.is_authenticated:
             blocked_ids = BlockedUser.objects.filter(blocker=request.user).values_list('blocked_id', flat=True)
@@ -487,49 +560,18 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
         return 'tu publicación'
 
     def get_message(self, obj):
-        actor_name = self._actor_name(obj)
-        if obj.notification_type == CommunityNotification.TYPE_REACTION:
-            return f'{actor_name} dejó una patita en {self._post_subject(obj)}.'
-        if obj.notification_type == CommunityNotification.TYPE_COMMENT:
-            return f'{actor_name} comentó {self._post_subject(obj)}.'
-        if obj.notification_type == CommunityNotification.TYPE_FOLLOW:
-            if obj.pet_id:
-                target_name = obj.pet.name
-            elif obj.clinic_id:
-                target_name = obj.clinic.name
-            elif obj.business_id:
-                target_name = obj.business.name
-            elif obj.shelter_id:
-                target_name = obj.shelter.name
-            else:
-                target_name = 'tu perfil'
-            return f'{actor_name} comenzó a seguir a {target_name}.'
-        return 'Tenés nueva actividad en VetPaw.'
+        from .push_utils import notification_message
+        return notification_message(obj)
 
     def get_target_url(self, obj):
-        if obj.notification_type == CommunityNotification.TYPE_FOLLOW:
-            if obj.pet_id:
-                profile = getattr(obj.pet, 'social_profile', None)
-                return f'/mascotas/{profile.slug if profile and profile.slug else obj.pet_id}'
-            if obj.clinic_id:
-                return f'/clinicas/{obj.clinic.slug}'
-            if obj.business_id:
-                return f'/negocios/{obj.business.slug}'
-            if obj.shelter_id:
-                return f'/refugios/{obj.shelter.slug}'
-        if (
-            obj.notification_type == CommunityNotification.TYPE_COMMENT
-            and obj.post_id
-            and obj.comment_id
-        ):
-            return f'/comunidad?publicacion={obj.post_id}&comentario={obj.comment_id}'
-        if obj.post_id:
-            return f'/comunidad?publicacion={obj.post_id}'
-        return '/comunidad'
+        from .push_utils import notification_target_url
+        return notification_target_url(obj)
 
     def get_target_type(self, obj):
         if obj.notification_type == CommunityNotification.TYPE_FOLLOW:
-            return 'pet'
+            return 'profile'
+        if obj.comment_id:
+            return 'comment'
         if obj.post_id:
             return 'post'
         return 'community'

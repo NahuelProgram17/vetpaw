@@ -13,7 +13,7 @@ from pets.models import Pet
 from partners.models import BusinessProfile, ShelterProfile
 from users.models import User
 
-from .models import BlockedUser, Comment, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report
+from .models import BlockedUser, Comment, CommentReaction, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report
 
 
 class CommunityApiTests(APITestCase):
@@ -874,3 +874,119 @@ class CommunityApiTests(APITestCase):
         self.assertEqual(allowed.status_code, 200)
         self.assertEqual(allowed.data['description'], 'Equipo profesional y cercano')
         self.assertTrue(allowed.data['can_edit'])
+
+
+    def test_stage4_reply_and_comment_reaction_create_precise_notifications(self):
+        post = Post.objects.create(created_by=self.owner, pet=self.pet, text='Una publicación')
+        self.client.force_authenticate(self.other)
+        comment_response = self.client.post(
+            f'/api/community/posts/{post.id}/comments/',
+            {'text': 'Primer comentario'},
+            format='json',
+        )
+        self.assertEqual(comment_response.status_code, 201)
+        parent_id = comment_response.data['id']
+
+        self.client.force_authenticate(self.owner)
+        reply_response = self.client.post(
+            f'/api/community/posts/{post.id}/comments/',
+            {'text': 'Gracias por comentar', 'parent_id': parent_id},
+            format='json',
+        )
+        self.assertEqual(reply_response.status_code, 201)
+        reply_id = reply_response.data['id']
+        self.assertEqual(reply_response.data['parent'], parent_id)
+
+        reply_notification = CommunityNotification.objects.get(
+            recipient=self.other,
+            notification_type=CommunityNotification.TYPE_REPLY,
+        )
+        self.assertEqual(reply_notification.comment_id, reply_id)
+
+        self.client.force_authenticate(self.other)
+        reacted = self.client.post(f'/api/community/comments/{reply_id}/react/')
+        self.assertEqual(reacted.status_code, 200)
+        self.assertTrue(reacted.data['reacted'])
+        self.assertTrue(CommentReaction.objects.filter(comment_id=reply_id, user=self.other).exists())
+        paw_notification = CommunityNotification.objects.get(
+            recipient=self.owner,
+            notification_type=CommunityNotification.TYPE_COMMENT_REACTION,
+        )
+        self.assertEqual(paw_notification.comment_id, reply_id)
+
+        comments = self.client.get(f'/api/community/posts/{post.id}/comments/')
+        self.assertEqual(comments.status_code, 200)
+        self.assertEqual(len(comments.data), 1)
+        self.assertEqual(comments.data[0]['replies'][0]['id'], reply_id)
+        self.assertTrue(comments.data[0]['replies'][0]['reacted_by_me'])
+
+        removed = self.client.post(f'/api/community/comments/{reply_id}/react/')
+        self.assertFalse(removed.data['reacted'])
+        self.assertFalse(CommunityNotification.objects.filter(pk=paw_notification.pk).exists())
+
+    def test_stage4_edit_permissions_mentions_and_share_counter(self):
+        post = Post.objects.create(created_by=self.owner, pet=self.pet, text='Texto original')
+
+        self.client.force_authenticate(self.other)
+        denied = self.client.patch(
+            f'/api/community/posts/{post.id}/',
+            {'text': 'No debería editar'},
+            format='json',
+        )
+        self.assertEqual(denied.status_code, 403)
+
+        self.client.force_authenticate(self.owner)
+        edited = self.client.patch(
+            f'/api/community/posts/{post.id}/',
+            {'text': f'Hola @{self.other.username}, mirá esto'},
+            format='json',
+        )
+        self.assertEqual(edited.status_code, 200)
+        post.refresh_from_db()
+        self.assertIn(f'@{self.other.username}', post.text)
+        mention = CommunityNotification.objects.get(
+            recipient=self.other,
+            notification_type=CommunityNotification.TYPE_MENTION,
+            post=post,
+            comment__isnull=True,
+        )
+        self.assertEqual(mention.post_id, post.id)
+
+        self.client.force_authenticate(None)
+        shared = self.client.post(f'/api/community/posts/{post.id}/share/')
+        self.assertEqual(shared.status_code, 200)
+        self.assertEqual(shared.data['shares_count'], 1)
+
+        self.client.force_authenticate(self.owner)
+        comment = self.client.post(
+            f'/api/community/posts/{post.id}/comments/',
+            {'text': 'Comentario editable'},
+            format='json',
+        )
+        edited_comment = self.client.patch(
+            f"/api/community/comments/{comment.data['id']}/",
+            {'text': f'Comentario para @{self.other.username}'},
+            format='json',
+        )
+        self.assertEqual(edited_comment.status_code, 200)
+        self.assertTrue(CommunityNotification.objects.filter(
+            recipient=self.other,
+            notification_type=CommunityNotification.TYPE_MENTION,
+            comment_id=comment.data['id'],
+        ).exists())
+
+        suggestions = self.client.get('/api/community/mentions/', {'q': 'other'})
+        self.assertEqual(suggestions.status_code, 200)
+        self.assertEqual(suggestions.data[0]['username'], self.other.username)
+
+    def test_stage4_rejects_reply_to_reply(self):
+        post = Post.objects.create(created_by=self.owner, pet=self.pet, text='Una publicación')
+        root = Comment.objects.create(post=post, author=self.owner, text='Raíz')
+        reply = Comment.objects.create(post=post, author=self.other, parent=root, text='Respuesta')
+        self.client.force_authenticate(self.owner)
+        response = self.client.post(
+            f'/api/community/posts/{post.id}/comments/',
+            {'text': 'Respuesta demasiado profunda', 'parent_id': reply.id},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 404)

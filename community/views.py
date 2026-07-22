@@ -1,6 +1,7 @@
 import re
 from django.conf import settings
-from django.db.models import Count, Q
+from django.contrib.auth import get_user_model
+from django.db.models import Count, F, Prefetch, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from datetime import timedelta
@@ -15,13 +16,17 @@ from lost_pets.models import LostPet
 from pets.models import BirthdayCelebration, Pet
 from partners.models import BusinessProfile, ShelterProfile
 
-from .models import BlockedUser, Comment, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report, SavedPost
+from .models import BlockedUser, Comment, CommentReaction, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report, SavedPost
 from .notification_utils import (
     create_comment_notification,
+    create_comment_reaction_notification,
     create_follow_notification,
     create_reaction_notification,
+    create_reply_notification,
+    remove_comment_reaction_notification,
     remove_follow_notification,
     remove_reaction_notification,
+    sync_mention_notifications,
 )
 from .permissions import IsOwnerOrModerator, is_community_moderator
 from .push_utils import MAX_ACTIVE_SUBSCRIPTIONS, push_is_configured, send_test_push
@@ -35,7 +40,7 @@ from .social_profiles import (
     target_kwargs,
     target_owner,
 )
-from .throttles import CommunityActionThrottle, CommunityCommentThrottle, CommunityPostThrottle
+from .throttles import CommunityActionThrottle, CommunityCommentThrottle, CommunityExploreThrottle, CommunityPostThrottle
 from .serializers import (
     BlockedUserSerializer,
     CommentSerializer,
@@ -65,12 +70,14 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
             return [CommunityPostThrottle()]
         if self.action == 'comments_action' and self.request.method == 'POST':
             return [CommunityCommentThrottle()]
+        if self.action == 'share':
+            return [CommunityExploreThrottle()]
         if self.action in ('react', 'save_post'):
             return [CommunityActionThrottle()]
         return []
 
     def get_permissions(self):
-        if self.action in ('list', 'retrieve'):
+        if self.action in ('list', 'retrieve', 'share'):
             return [permissions.AllowAny()]
         if self.action in ('destroy', 'partial_update', 'update'):
             return [permissions.IsAuthenticated(), IsOwnerOrModerator()]
@@ -163,13 +170,26 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
             )
         return queryset.order_by('-created_at')
 
+    def perform_create(self, serializer):
+        post = serializer.save()
+        sync_mention_notifications(post.text, self.request.user, post)
+
     def perform_update(self, serializer):
         instance = self.get_object()
         allowed = {'text', 'image'}
         cleaned = {key: value for key, value in serializer.validated_data.items() if key in allowed}
         for key, value in cleaned.items():
             setattr(instance, key, value)
-        instance.save(update_fields=[*cleaned.keys(), 'updated_at'])
+        if cleaned:
+            instance.save(update_fields=[*cleaned.keys(), 'updated_at'])
+        sync_mention_notifications(instance.text, self.request.user, instance)
+
+    @action(detail=True, methods=['post'])
+    def share(self, request, pk=None):
+        post = self.get_object()
+        Post.objects.filter(pk=post.pk).update(shares_count=F('shares_count') + 1)
+        post.refresh_from_db(fields=['shares_count'])
+        return Response({'shares_count': post.shares_count})
 
     @action(detail=True, methods=['post'])
     def react(self, request, pk=None):
@@ -197,26 +217,111 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
     def comments_action(self, request, pk=None):
         post = self.get_object()
         if request.method == 'GET':
-            comments = post.comments.filter(moderation_status=Comment.STATUS_PUBLISHED).select_related('author')
+            blocked_user_ids = set()
             if request.user.is_authenticated:
-                blocked_ids = BlockedUser.objects.filter(blocker=request.user).values_list('blocked_id', flat=True)
-                blocker_ids = BlockedUser.objects.filter(blocked=request.user).values_list('blocker_id', flat=True)
-                comments = comments.exclude(author_id__in=list(blocked_ids) + list(blocker_ids))
-            return Response(CommentSerializer(comments, many=True, context={'request': request}).data)
+                blocked = BlockedUser.objects.filter(blocker=request.user).values_list('blocked_id', flat=True)
+                blockers = BlockedUser.objects.filter(blocked=request.user).values_list('blocker_id', flat=True)
+                blocked_user_ids = set(blocked).union(blockers)
+
+            replies = Comment.objects.filter(
+                moderation_status=Comment.STATUS_PUBLISHED,
+            ).exclude(author_id__in=blocked_user_ids).select_related('author').annotate(
+                reactions_total=Count('reactions', distinct=True),
+            ).order_by('created_at')
+            comments = post.comments.filter(
+                moderation_status=Comment.STATUS_PUBLISHED,
+                parent__isnull=True,
+            ).exclude(author_id__in=blocked_user_ids).select_related('author').annotate(
+                reactions_total=Count('reactions', distinct=True),
+            ).prefetch_related(Prefetch('replies', queryset=replies, to_attr='_visible_replies'))
+
+            all_ids = []
+            rows = list(comments)
+            for comment in rows:
+                all_ids.append(comment.id)
+                all_ids.extend(reply.id for reply in getattr(comment, '_visible_replies', []))
+            reacted_ids = set()
+            if request.user.is_authenticated and all_ids:
+                reacted_ids = set(CommentReaction.objects.filter(
+                    user=request.user,
+                    comment_id__in=all_ids,
+                ).values_list('comment_id', flat=True))
+            context = {'request': request, 'reacted_comment_ids': reacted_ids}
+            return Response(CommentSerializer(rows, many=True, context=context).data)
+
         serializer = CommentSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        comment = serializer.save(post=post, author=request.user)
-        create_comment_notification(post, request.user, comment)
-        return Response(CommentSerializer(comment, context={'request': request}).data, status=status.HTTP_201_CREATED)
+        parent = None
+        parent_id = request.data.get('parent_id') or request.data.get('parent')
+        if parent_id:
+            parent = get_object_or_404(
+                Comment.objects.filter(
+                    post=post,
+                    moderation_status=Comment.STATUS_PUBLISHED,
+                    parent__isnull=True,
+                ),
+                pk=parent_id,
+            )
+        comment = serializer.save(post=post, author=request.user, parent=parent)
+        already_notified = set()
+        if not parent or parent.author_id != post.created_by_id:
+            if create_comment_notification(post, request.user, comment):
+                already_notified.add(post.created_by_id)
+        if parent:
+            if create_reply_notification(parent, comment, request.user):
+                already_notified.add(parent.author_id)
+        sync_mention_notifications(
+            comment.text,
+            request.user,
+            post,
+            comment=comment,
+            exclude_recipient_ids=already_notified,
+        )
+        return Response(
+            CommentSerializer(comment, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
-class CommentViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
-    queryset = Comment.objects.all()
+class CommentViewSet(mixins.UpdateModelMixin, mixins.DestroyModelMixin, viewsets.GenericViewSet):
+    queryset = Comment.objects.select_related('post', 'author', 'parent__author')
     serializer_class = CommentSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrModerator]
+    parser_classes = [JSONParser]
+
+    def get_throttles(self):
+        if self.action == 'react':
+            return [CommunityActionThrottle()]
+        return []
+
+    def get_permissions(self):
+        if self.action == 'react':
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated(), IsOwnerOrModerator()]
+
+    def perform_update(self, serializer):
+        comment = serializer.save()
+        sync_mention_notifications(comment.text, self.request.user, comment.post, comment=comment)
 
     def perform_destroy(self, instance):
         instance.delete()
+
+    @action(detail=True, methods=['post'])
+    def react(self, request, pk=None):
+        comment = self.get_object()
+        reaction, created = CommentReaction.objects.get_or_create(
+            comment=comment,
+            user=request.user,
+        )
+        if created:
+            create_comment_reaction_notification(comment, request.user)
+        else:
+            reaction.delete()
+            remove_comment_reaction_notification(comment, request.user)
+        return Response({
+            'reacted': created,
+            'reactions_count': comment.reactions.count(),
+        })
 
 
 class PetSocialProfileViewSet(viewsets.GenericViewSet):
@@ -280,6 +385,35 @@ class PetSocialProfileViewSet(viewsets.GenericViewSet):
             follow.delete()
             remove_follow_notification(pet, request.user)
         return Response({'following': created, 'followers_count': pet.social_followers.count()})
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def community_mention_suggestions(request):
+    query = str(request.query_params.get('q') or '').strip().lstrip('@')[:80]
+    if len(query) < 2:
+        return Response([])
+    blocked = blocked_user_ids(request.user)
+    users = get_user_model().objects.filter(
+        Q(username__istartswith=query)
+        | Q(first_name__icontains=query)
+        | Q(last_name__icontains=query),
+        is_active=True,
+        is_approved=True,
+    ).exclude(pk=request.user.pk).exclude(pk__in=blocked).select_related(
+        'clinic_profile', 'business_profile', 'shelter_profile',
+    ).order_by('username')[:8]
+    results = []
+    for user in users:
+        identity = primary_identity_for_user(user, request=request)
+        results.append({
+            'username': user.username,
+            'display_name': identity.get('name') if identity else (user.get_full_name().strip() or user.username),
+            'avatar': identity.get('photo') if identity else absolute_file_url(request, user.avatar),
+            'profile_url': identity.get('profile_url') if identity else '',
+            'type': identity.get('type') if identity else 'user',
+        })
+    return Response(results)
 
 
 class CommunityNotificationPagination(PageNumberPagination):

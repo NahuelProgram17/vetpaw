@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import BlockedUser, Comment, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report, SavedPost
+from .models import BlockedUser, Comment, CommentReaction, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report, SavedPost
 
 
 @admin.register(Post)
@@ -38,7 +38,7 @@ class PostAdmin(admin.ModelAdmin):
 
 @admin.register(Comment)
 class CommentAdmin(admin.ModelAdmin):
-    list_display = ('id', 'author', 'post', 'moderation_status', 'created_at')
+    list_display = ('id', 'author', 'post', 'parent', 'moderation_status', 'created_at')
     list_filter = ('moderation_status', 'created_at')
     search_fields = ('text', 'author__username')
 
@@ -62,6 +62,7 @@ class ReportAdmin(admin.ModelAdmin):
 
 admin.site.register(PetSocialProfile)
 admin.site.register(Reaction)
+admin.site.register(CommentReaction)
 
 
 @admin.register(PetFollow)

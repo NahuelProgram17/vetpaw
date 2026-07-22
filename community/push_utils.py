@@ -62,6 +62,12 @@ def notification_message(notification):
         return f'{actor_name} dejó una patita en {_post_subject(notification)}.'
     if notification.notification_type == CommunityNotification.TYPE_COMMENT:
         return f'{actor_name} comentó {_post_subject(notification)}.'
+    if notification.notification_type == CommunityNotification.TYPE_COMMENT_REACTION:
+        return f'{actor_name} dejó una patita en tu comentario.'
+    if notification.notification_type == CommunityNotification.TYPE_REPLY:
+        return f'{actor_name} respondió tu comentario.'
+    if notification.notification_type == CommunityNotification.TYPE_MENTION:
+        return f'{actor_name} te mencionó en VetPaw.'
     if notification.notification_type == CommunityNotification.TYPE_FOLLOW:
         if notification.pet_id:
             target_name = notification.pet.name
@@ -89,7 +95,12 @@ def notification_target_url(notification):
         if notification.shelter_id:
             return f'/refugios/{notification.shelter.slug}'
     if (
-        notification.notification_type == CommunityNotification.TYPE_COMMENT
+        notification.notification_type in {
+            CommunityNotification.TYPE_COMMENT,
+            CommunityNotification.TYPE_COMMENT_REACTION,
+            CommunityNotification.TYPE_REPLY,
+            CommunityNotification.TYPE_MENTION,
+        }
         and notification.post_id
         and notification.comment_id
     ):

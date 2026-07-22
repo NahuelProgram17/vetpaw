@@ -98,6 +98,7 @@ class Post(models.Model):
     post_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_NORMAL)
     text = models.TextField(blank=True, max_length=3000)
     image = models.ImageField(upload_to='community/posts/', blank=True, null=True)
+    shares_count = models.PositiveIntegerField(default=0)
     province = models.CharField(max_length=100, blank=True)
     locality = models.CharField(max_length=100, blank=True)
     is_public = models.BooleanField(default=True)
@@ -164,6 +165,13 @@ class Comment(models.Model):
 
     post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='comments')
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='community_comments')
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        related_name='replies',
+        null=True,
+        blank=True,
+    )
     text = models.CharField(max_length=1000)
     moderation_status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PUBLISHED)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -171,7 +179,19 @@ class Comment(models.Model):
 
     class Meta:
         ordering = ['created_at']
-        indexes = [models.Index(fields=['post', 'moderation_status', 'created_at'])]
+        indexes = [
+            models.Index(fields=['post', 'moderation_status', 'created_at']),
+            models.Index(fields=['parent', 'moderation_status', 'created_at'], name='comm_comment_parent_idx'),
+        ]
+
+    def clean(self):
+        if self.parent_id:
+            if self.parent_id == self.pk:
+                raise ValidationError('Un comentario no puede responderse a sí mismo.')
+            if self.parent.post_id != self.post_id:
+                raise ValidationError('La respuesta debe pertenecer a la misma publicación.')
+            if self.parent.parent_id:
+                raise ValidationError('Las respuestas solo pueden tener un nivel de profundidad.')
 
     def __str__(self):
         return f'{self.author.username}: {self.text[:40]}'
@@ -187,6 +207,25 @@ class Reaction(models.Model):
             models.UniqueConstraint(fields=['post', 'user'], name='unique_community_post_reaction')
         ]
         indexes = [models.Index(fields=['post', 'created_at'])]
+
+
+class CommentReaction(models.Model):
+    comment = models.ForeignKey(Comment, on_delete=models.CASCADE, related_name='reactions')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='community_comment_reactions',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['comment', 'user'],
+                name='unique_community_comment_reaction',
+            )
+        ]
+        indexes = [models.Index(fields=['comment', 'created_at'], name='comm_creact_comment_idx')]
 
 
 class PetFollow(models.Model):
@@ -332,10 +371,16 @@ class CommunityNotification(models.Model):
     TYPE_REACTION = 'reaction'
     TYPE_COMMENT = 'comment'
     TYPE_FOLLOW = 'follow'
+    TYPE_COMMENT_REACTION = 'comment_reaction'
+    TYPE_REPLY = 'reply'
+    TYPE_MENTION = 'mention'
     TYPE_CHOICES = [
         (TYPE_REACTION, 'Patita en publicación'),
         (TYPE_COMMENT, 'Comentario en publicación'),
         (TYPE_FOLLOW, 'Nuevo seguidor'),
+        (TYPE_COMMENT_REACTION, 'Patita en comentario'),
+        (TYPE_REPLY, 'Respuesta a comentario'),
+        (TYPE_MENTION, 'Mención'),
     ]
 
     recipient = models.ForeignKey(
@@ -428,6 +473,26 @@ class CommunityNotification(models.Model):
                 fields=['recipient', 'actor', 'shelter', 'notification_type'],
                 condition=Q(notification_type='follow', shelter__isnull=False),
                 name='unique_shelter_follow_notification',
+            ),
+            models.UniqueConstraint(
+                fields=['recipient', 'actor', 'comment', 'notification_type'],
+                condition=Q(notification_type='comment_reaction', comment__isnull=False),
+                name='unique_comment_reaction_notification',
+            ),
+            models.UniqueConstraint(
+                fields=['recipient', 'actor', 'comment', 'notification_type'],
+                condition=Q(notification_type='reply', comment__isnull=False),
+                name='unique_reply_notification',
+            ),
+            models.UniqueConstraint(
+                fields=['recipient', 'actor', 'post', 'notification_type'],
+                condition=Q(notification_type='mention', comment__isnull=True, post__isnull=False),
+                name='unique_post_mention_notification',
+            ),
+            models.UniqueConstraint(
+                fields=['recipient', 'actor', 'comment', 'notification_type'],
+                condition=Q(notification_type='mention', comment__isnull=False),
+                name='unique_comment_mention_notification',
             ),
         ]
 

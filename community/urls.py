@@ -12,6 +12,7 @@ from .views import (
     PushSubscriptionViewSet,
     ReportViewSet,
     community_discover,
+    community_mention_suggestions,
     community_profile_connections,
     community_profile_follow,
 )
@@ -29,6 +30,7 @@ urlpatterns = [
     path('', include(router.urls)),
     path('community/discover/', community_discover, name='community-discover'),
     path('community/explore/', community_explore, name='community-explore'),
+    path('community/mentions/', community_mention_suggestions, name='community-mentions'),
     path('community/profiles/<str:profile_type>/<str:identifier>/follow/', community_profile_follow, name='community-profile-follow'),
     path('community/profiles/<str:profile_type>/<str:identifier>/connections/', community_profile_connections, name='community-profile-connections'),
 ]

@@ -1,8 +1,13 @@
+import re
+
+from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.utils import timezone
 
 from .models import BlockedUser, CommunityNotification
 from .push_utils import schedule_push_notification
+
+MENTION_PATTERN = re.compile(r'(?<![\w@])@([\w.+-]{3,150})', re.UNICODE)
 
 
 def _can_notify(recipient, actor):
@@ -11,6 +16,18 @@ def _can_notify(recipient, actor):
     return not BlockedUser.objects.filter(
         Q(blocker=recipient, blocked=actor) | Q(blocker=actor, blocked=recipient)
     ).exists()
+
+
+def _refresh_notification(notification, **fields):
+    for key, value in fields.items():
+        setattr(notification, key, value)
+    notification.is_read = False
+    notification.read_at = None
+    notification.created_at = timezone.now()
+    update_fields = list(fields.keys()) + ['is_read', 'read_at', 'created_at', 'updated_at']
+    notification.save(update_fields=list(dict.fromkeys(update_fields)))
+    schedule_push_notification(notification)
+    return notification
 
 
 def create_reaction_notification(post, actor):
@@ -25,19 +42,21 @@ def create_reaction_notification(post, actor):
         notification_type=CommunityNotification.TYPE_REACTION,
         defaults={
             'pet': post.pet if post.pet_id else None,
-            'is_read': False,
+            'clinic': post.clinic if post.clinic_id else None,
+            'business': post.business if post.business_id else None,
+            'shelter': post.shelter if post.shelter_id else None,
         },
     )
-    if not created:
-        notification.pet = post.pet if post.pet_id else notification.pet
-        notification.is_read = False
-        notification.read_at = None
-        notification.created_at = timezone.now()
-        notification.save(
-            update_fields=['pet', 'is_read', 'read_at', 'created_at', 'updated_at']
-        )
-    schedule_push_notification(notification)
-    return notification
+    if created:
+        schedule_push_notification(notification)
+        return notification
+    return _refresh_notification(
+        notification,
+        pet=post.pet if post.pet_id else notification.pet,
+        clinic=post.clinic if post.clinic_id else notification.clinic,
+        business=post.business if post.business_id else notification.business,
+        shelter=post.shelter if post.shelter_id else notification.shelter,
+    )
 
 
 def remove_reaction_notification(post, actor):
@@ -63,31 +82,117 @@ def create_comment_notification(post, actor, comment):
         is_read=False,
     ).first()
 
+    target_fields = {
+        'comment': comment,
+        'pet': post.pet if post.pet_id else None,
+        'clinic': post.clinic if post.clinic_id else None,
+        'business': post.business if post.business_id else None,
+        'shelter': post.shelter if post.shelter_id else None,
+        'extra_text': preview,
+    }
     if notification:
-        notification.comment = comment
-        notification.pet = post.pet if post.pet_id else notification.pet
-        notification.extra_text = preview
-        notification.read_at = None
-        notification.created_at = timezone.now()
-        notification.save(
-            update_fields=[
-                'comment', 'pet', 'extra_text', 'read_at', 'created_at', 'updated_at'
-            ]
-        )
-        schedule_push_notification(notification)
-        return notification
+        return _refresh_notification(notification, **target_fields)
 
     notification = CommunityNotification.objects.create(
         recipient=recipient,
         actor=actor,
         post=post,
-        comment=comment,
-        pet=post.pet if post.pet_id else None,
         notification_type=CommunityNotification.TYPE_COMMENT,
-        extra_text=preview,
+        **target_fields,
     )
     schedule_push_notification(notification)
     return notification
+
+
+def create_reply_notification(parent, reply, actor):
+    recipient = parent.author
+    if not _can_notify(recipient, actor):
+        return None
+    preview = (reply.text or '').strip()[:300]
+    notification, created = CommunityNotification.objects.get_or_create(
+        recipient=recipient,
+        actor=actor,
+        post=reply.post,
+        comment=reply,
+        notification_type=CommunityNotification.TYPE_REPLY,
+        defaults={'extra_text': preview},
+    )
+    if created:
+        schedule_push_notification(notification)
+        return notification
+    return _refresh_notification(notification, extra_text=preview)
+
+
+def create_comment_reaction_notification(comment, actor):
+    recipient = comment.author
+    if not _can_notify(recipient, actor):
+        return None
+    notification, created = CommunityNotification.objects.get_or_create(
+        recipient=recipient,
+        actor=actor,
+        post=comment.post,
+        comment=comment,
+        notification_type=CommunityNotification.TYPE_COMMENT_REACTION,
+    )
+    if created:
+        schedule_push_notification(notification)
+        return notification
+    return _refresh_notification(notification)
+
+
+def remove_comment_reaction_notification(comment, actor):
+    CommunityNotification.objects.filter(
+        recipient=comment.author,
+        actor=actor,
+        comment=comment,
+        notification_type=CommunityNotification.TYPE_COMMENT_REACTION,
+    ).delete()
+
+
+def sync_mention_notifications(text, actor, post, comment=None, exclude_recipient_ids=None):
+    """Sincroniza menciones hechas por un usuario en una publicación o comentario."""
+    base = CommunityNotification.objects.filter(
+        actor=actor,
+        post=post,
+        notification_type=CommunityNotification.TYPE_MENTION,
+    )
+    if comment is None:
+        base = base.filter(comment__isnull=True)
+    else:
+        base = base.filter(comment=comment)
+
+    usernames = {match for match in MENTION_PATTERN.findall(text or '')}
+    User = get_user_model()
+    username_query = Q(pk__in=[])
+    for username in usernames:
+        username_query |= Q(username__iexact=username)
+    recipients = list(User.objects.filter(username_query, is_active=True)) if usernames else []
+    excluded = set(exclude_recipient_ids or [])
+    recipient_ids = {
+        user.id for user in recipients
+        if user.id not in excluded and _can_notify(user, actor)
+    }
+    base.exclude(recipient_id__in=recipient_ids).delete()
+
+    created_notifications = []
+    preview = (text or '').strip()[:300]
+    for recipient in recipients:
+        if recipient.id not in recipient_ids:
+            continue
+        notification, created = CommunityNotification.objects.get_or_create(
+            recipient=recipient,
+            actor=actor,
+            post=post,
+            comment=comment,
+            notification_type=CommunityNotification.TYPE_MENTION,
+            defaults={'extra_text': preview},
+        )
+        if created:
+            schedule_push_notification(notification)
+        else:
+            _refresh_notification(notification, extra_text=preview)
+        created_notifications.append(notification)
+    return created_notifications
 
 
 def _target_data(target):
@@ -117,15 +222,10 @@ def create_follow_notification(target, actor):
         notification_type=CommunityNotification.TYPE_FOLLOW,
         **target_fields,
     )
-    if not created:
-        notification.is_read = False
-        notification.read_at = None
-        notification.created_at = timezone.now()
-        notification.save(
-            update_fields=['is_read', 'read_at', 'created_at', 'updated_at']
-        )
-    schedule_push_notification(notification)
-    return notification
+    if created:
+        schedule_push_notification(notification)
+        return notification
+    return _refresh_notification(notification)
 
 
 def remove_follow_notification(target, actor):
