@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'blog',
     'community.apps.CommunityConfig',
     'partners.apps.PartnersConfig',
+    'adoptions.apps.AdoptionsConfig',
     'axes',
 ]
 
