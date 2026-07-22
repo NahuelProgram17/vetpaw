@@ -127,3 +127,51 @@ class VisitApiTests(APITestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertFalse(Visit.objects.filter(pet=unrelated_pet).exists())
+
+
+class AppointmentPrivacyTests(APITestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            username='appointment-privacy-owner',
+            email='appointment-privacy-owner@example.com',
+            password=token_urlsafe(24),
+            role='owner',
+            is_approved=True,
+        )
+        self.clinic_user = User.objects.create_user(
+            username='appointment-privacy-clinic',
+            email='appointment-privacy-clinic@example.com',
+            password=token_urlsafe(24),
+            role='clinic',
+            is_approved=True,
+        )
+        self.clinic = Clinic.objects.create(
+            owner=self.clinic_user,
+            name='Clínica privada',
+            address='Calle 10',
+            province='Buenos Aires',
+            locality='Moreno',
+        )
+        self.pet = Pet.objects.create(
+            owner=self.owner,
+            name='Milo',
+            species='dog',
+            sex='male',
+        )
+        self.client.force_authenticate(self.owner)
+
+    def test_clinic_can_disable_community_appointment_requests(self):
+        from community.models import CommunityPrivacySettings
+        CommunityPrivacySettings.objects.create(
+            user=self.clinic_user,
+            allow_appointment_requests=False,
+        )
+        response = self.client.post('/api/appointments/', {
+            'pet': self.pet.id,
+            'clinic': self.clinic.id,
+            'requested_date': (timezone.now() + timedelta(days=2)).isoformat(),
+            'reason': 'Control',
+            'appointment_type': 'control',
+        }, format='json')
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Appointment.objects.filter(owner=self.owner, clinic=self.clinic).exists())

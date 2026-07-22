@@ -5,7 +5,7 @@ from django.utils import timezone
 from lost_pets.models import LostPet
 from pets.models import BirthdayCelebration, Pet
 
-from .models import PetSocialProfile, Post
+from .models import CommunityPrivacySettings, PetSocialProfile, Post
 
 
 @receiver(post_save, sender=Pet)
@@ -37,7 +37,8 @@ def create_birthday_community_post(sender, instance, created, **kwargs):
     if not created:
         return
     profile, _ = PetSocialProfile.objects.get_or_create(pet=instance.pet)
-    if not profile.is_public:
+    settings, _ = CommunityPrivacySettings.objects.get_or_create(user=instance.pet.owner)
+    if settings.birthday_visibility != CommunityPrivacySettings.BIRTHDAY_COMMUNITY:
         return
     age_label = f'{instance.age} año' if instance.age == 1 else f'{instance.age} años'
     Post.objects.get_or_create(

@@ -16,19 +16,29 @@ from lost_pets.models import LostPet
 from pets.models import BirthdayCelebration, Pet
 from partners.models import BusinessProfile, ShelterProfile
 
-from .models import BlockedUser, Comment, CommentReaction, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report, SavedPost
+from .models import (
+    BlockedUser, Comment, CommentReaction, CommunityNotification, CommunityPrivacySettings,
+    HiddenPost, MutedUser, PetFollow, PetFollowRequest, PetSocialProfile, Post,
+    PushSubscription, Reaction, Report, SavedPost,
+)
 from .notification_utils import (
     create_comment_notification,
     create_comment_reaction_notification,
     create_follow_notification,
+    create_follow_request_notification,
     create_reaction_notification,
     create_reply_notification,
     remove_comment_reaction_notification,
     remove_follow_notification,
+    remove_follow_request_notification,
     remove_reaction_notification,
     sync_mention_notifications,
 )
 from .permissions import IsOwnerOrModerator, is_community_moderator
+from .privacy import (
+    can_access_pet_profile, can_comment_on_post, privacy_for,
+    users_blocked_between, visible_posts_for,
+)
 from .push_utils import MAX_ACTIVE_SUBSCRIPTIONS, push_is_configured, send_test_push
 from .social_profiles import (
     blocked_user_ids,
@@ -44,6 +54,10 @@ from .throttles import CommunityActionThrottle, CommunityCommentThrottle, Commun
 from .serializers import (
     BlockedUserSerializer,
     CommentSerializer,
+    CommunityPrivacySettingsSerializer,
+    HiddenPostSerializer,
+    MutedUserSerializer,
+    PetFollowRequestSerializer,
     CommunityNotificationSerializer,
     PetSocialProfileSerializer,
     PostSerializer,
@@ -104,10 +118,7 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
 
         request = self.request
         user = request.user
-        if user.is_authenticated:
-            blocked_ids = BlockedUser.objects.filter(blocker=user).values_list('blocked_id', flat=True)
-            blocker_ids = BlockedUser.objects.filter(blocked=user).values_list('blocker_id', flat=True)
-            queryset = queryset.exclude(created_by_id__in=list(blocked_ids) + list(blocker_ids))
+        queryset = visible_posts_for(queryset, user)
 
         feed = request.query_params.get('feed')
         if feed == 'following':
@@ -176,7 +187,7 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         instance = self.get_object()
-        allowed = {'text', 'image'}
+        allowed = {'text', 'image', 'comment_permission'}
         cleaned = {key: value for key, value in serializer.validated_data.items() if key in allowed}
         for key, value in cleaned.items():
             setattr(instance, key, value)
@@ -249,6 +260,10 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
             context = {'request': request, 'reacted_comment_ids': reacted_ids}
             return Response(CommentSerializer(rows, many=True, context=context).data)
 
+        allowed, reason = can_comment_on_post(post, request.user)
+        if not allowed:
+            return Response({'error': reason}, status=status.HTTP_403_FORBIDDEN)
+
         serializer = CommentSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         parent = None
@@ -284,10 +299,21 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
 
 
 class CommentViewSet(mixins.UpdateModelMixin, mixins.DestroyModelMixin, viewsets.GenericViewSet):
-    queryset = Comment.objects.select_related('post', 'author', 'parent__author')
     serializer_class = CommentSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrModerator]
     parser_classes = [JSONParser]
+
+    def get_queryset(self):
+        posts = visible_posts_for(
+            Post.objects.filter(moderation_status=Post.STATUS_PUBLISHED),
+            self.request.user,
+        )
+        queryset = Comment.objects.filter(post__in=posts).select_related(
+            'post', 'post__created_by', 'author', 'parent__author',
+        )
+        if self.action in ('react', 'hide'):
+            queryset = queryset.filter(moderation_status=Comment.STATUS_PUBLISHED)
+        return queryset
 
     def get_throttles(self):
         if self.action == 'react':
@@ -295,9 +321,14 @@ class CommentViewSet(mixins.UpdateModelMixin, mixins.DestroyModelMixin, viewsets
         return []
 
     def get_permissions(self):
-        if self.action == 'react':
+        if self.action in ('react', 'hide'):
             return [permissions.IsAuthenticated()]
         return [permissions.IsAuthenticated(), IsOwnerOrModerator()]
+
+    def check_object_permissions(self, request, obj):
+        if self.action == 'destroy' and obj.post.created_by_id == request.user.id:
+            return
+        super().check_object_permissions(request, obj)
 
     def perform_update(self, serializer):
         comment = serializer.save()
@@ -305,6 +336,15 @@ class CommentViewSet(mixins.UpdateModelMixin, mixins.DestroyModelMixin, viewsets
 
     def perform_destroy(self, instance):
         instance.delete()
+
+    @action(detail=True, methods=['post'])
+    def hide(self, request, pk=None):
+        comment = self.get_object()
+        if comment.post.created_by_id != request.user.id and not is_community_moderator(request.user):
+            return Response({'error': 'Solo el autor de la publicación puede ocultar este comentario.'}, status=status.HTTP_403_FORBIDDEN)
+        comment.moderation_status = Comment.STATUS_HIDDEN
+        comment.save(update_fields=['moderation_status', 'updated_at'])
+        return Response({'hidden': True, 'comment_id': comment.id})
 
     @action(detail=True, methods=['post'])
     def react(self, request, pk=None):
@@ -348,13 +388,9 @@ class PetSocialProfileViewSet(viewsets.GenericViewSet):
             )
             pet = profile.pet
         request = self.request
-        if not profile.is_public:
-            allowed = request.user.is_authenticated and (
-                pet.owner_id == request.user.id or is_community_moderator(request.user)
-            )
-            if not allowed:
-                from rest_framework.exceptions import NotFound
-                raise NotFound('Este perfil no es público.')
+        if request.user.is_authenticated and users_blocked_between(pet.owner, request.user):
+            from rest_framework.exceptions import NotFound
+            raise NotFound('Este perfil no está disponible.')
         return profile
 
     def retrieve(self, request, pk=None):
@@ -367,9 +403,7 @@ class PetSocialProfileViewSet(viewsets.GenericViewSet):
             return Response({'error': 'Solo el dueño puede editar este perfil.'}, status=status.HTTP_403_FORBIDDEN)
         serializer = self.get_serializer(profile, data=request.data, partial=True, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        updated = serializer.save()
-        if 'is_public' in serializer.validated_data:
-            updated.pet.community_posts.update(is_public=updated.is_public)
+        serializer.save()
         return Response(serializer.data)
 
     @action(detail=True, methods=['post'])
@@ -378,13 +412,22 @@ class PetSocialProfileViewSet(viewsets.GenericViewSet):
         pet = profile.pet
         if pet.owner_id == request.user.id:
             return Response({'error': 'No necesitás seguir a tu propia mascota.'}, status=status.HTTP_400_BAD_REQUEST)
-        follow, created = PetFollow.objects.get_or_create(follower=request.user, pet=pet)
-        if created:
-            create_follow_notification(pet, request.user)
-        else:
-            follow.delete()
+        existing = PetFollow.objects.filter(follower=request.user, pet=pet).first()
+        if existing:
+            existing.delete()
             remove_follow_notification(pet, request.user)
-        return Response({'following': created, 'followers_count': pet.social_followers.count()})
+            return Response({'following': False, 'requested': False, 'followers_count': pet.social_followers.count()})
+        if not profile.is_public:
+            pending, created = PetFollowRequest.objects.get_or_create(follower=request.user, pet=pet)
+            if created:
+                create_follow_request_notification(pet, request.user)
+            else:
+                pending.delete()
+                remove_follow_request_notification(pet, request.user)
+            return Response({'following': False, 'requested': created, 'followers_count': pet.social_followers.count()})
+        PetFollow.objects.create(follower=request.user, pet=pet)
+        create_follow_notification(pet, request.user)
+        return Response({'following': True, 'requested': False, 'followers_count': pet.social_followers.count()})
 
 
 @api_view(['GET'])
@@ -591,21 +634,42 @@ def community_profile_follow(request, profile_type, identifier):
     except ValueError:
         return Response({'error': 'Tipo de perfil inválido.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    if not is_target_public(profile_type, target, request.user):
-        return Response({'error': 'Este perfil no está disponible.'}, status=status.HTTP_404_NOT_FOUND)
     if getattr(target, 'owner_id', None) == request.user.id:
         return Response({'error': 'No necesitás seguir tu propio perfil.'}, status=status.HTTP_400_BAD_REQUEST)
+    if users_blocked_between(target.owner, request.user):
+        return Response({'error': 'Este perfil no está disponible.'}, status=status.HTTP_404_NOT_FOUND)
 
     filters = {'follower': request.user, **target_kwargs(profile_type, target)}
-    follow, created = PetFollow.objects.get_or_create(**filters)
-    if created:
-        create_follow_notification(target, request.user)
-    else:
-        follow.delete()
+    existing = PetFollow.objects.filter(**filters).first()
+    if existing:
+        existing.delete()
         remove_follow_notification(target, request.user)
+        return Response({
+            'following': False,
+            'requested': False,
+            'followers_count': follow_queryset_for_target(profile_type, target).count(),
+        })
 
+    if profile_type == 'pet':
+        profile, _ = PetSocialProfile.objects.get_or_create(pet=target)
+        if not profile.is_public:
+            pending, created = PetFollowRequest.objects.get_or_create(follower=request.user, pet=target)
+            if created:
+                create_follow_request_notification(target, request.user)
+            else:
+                pending.delete()
+                remove_follow_request_notification(target, request.user)
+            return Response({
+                'following': False,
+                'requested': created,
+                'followers_count': follow_queryset_for_target(profile_type, target).count(),
+            })
+
+    PetFollow.objects.create(**filters)
+    create_follow_notification(target, request.user)
     return Response({
-        'following': created,
+        'following': True,
+        'requested': False,
         'followers_count': follow_queryset_for_target(profile_type, target).count(),
     })
 
@@ -618,12 +682,24 @@ def community_profile_connections(request, profile_type, identifier):
     except ValueError:
         return Response({'error': 'Tipo de perfil inválido.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    if not is_target_public(profile_type, target, request.user):
+    if profile_type == 'pet':
+        profile, _ = PetSocialProfile.objects.get_or_create(pet=target)
+        if not can_access_pet_profile(profile, request.user):
+            return Response({'error': 'Este perfil es privado.'}, status=status.HTTP_403_FORBIDDEN)
+    elif not is_target_public(profile_type, target, request.user):
         return Response({'error': 'Este perfil no está disponible.'}, status=status.HTTP_404_NOT_FOUND)
+
+    settings = privacy_for(target.owner)
+    is_owner = bool(request.user.is_authenticated and request.user.id == target.owner_id)
 
     kind = str(request.query_params.get('kind') or 'followers').lower()
     if kind not in {'followers', 'following'}:
         return Response({'error': 'Elegí followers o following.'}, status=status.HTTP_400_BAD_REQUEST)
+    if settings and not is_owner:
+        if kind == 'followers' and not settings.show_followers:
+            return Response({'error': 'La lista de seguidores es privada.'}, status=status.HTTP_403_FORBIDDEN)
+        if kind == 'following' and not settings.show_following:
+            return Response({'error': 'La lista de seguidos es privada.'}, status=status.HTTP_403_FORBIDDEN)
 
     try:
         page = max(1, int(request.query_params.get('page', 1)))
@@ -677,6 +753,183 @@ def community_profile_connections(request, profile_type, identifier):
         'previous': page - 1 if page > 1 else None,
         'results': unique[start:end],
     })
+
+
+class CommunityPrivacyViewSet(viewsets.GenericViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = CommunityPrivacySettingsSerializer
+
+    def list(self, request):
+        settings_obj = privacy_for(request.user)
+        pets = PetSocialProfile.objects.filter(pet__owner=request.user).select_related('pet')
+        return Response({
+            'settings': self.get_serializer(settings_obj).data,
+            'pets': [
+                {
+                    'id': profile.pet_id,
+                    'slug': profile.slug,
+                    'name': profile.pet.name,
+                    'photo': absolute_file_url(request, profile.pet.photo),
+                    'is_public': profile.is_public,
+                    'pending_requests': profile.pet.community_follow_requests.count(),
+                }
+                for profile in pets
+            ],
+        })
+
+    @action(detail=False, methods=['patch'], url_path='settings')
+    def update_settings(self, request):
+        settings_obj = privacy_for(request.user)
+        serializer = self.get_serializer(settings_obj, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        updated = serializer.save()
+        if 'birthday_visibility' in serializer.validated_data:
+            Post.objects.filter(
+                created_by=request.user,
+                related_birthday__isnull=False,
+            ).update(
+                is_public=updated.birthday_visibility == CommunityPrivacySettings.BIRTHDAY_COMMUNITY,
+            )
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['patch'], url_path=r'pets/(?P<pet_id>[^/.]+)')
+    def pet_settings(self, request, pet_id=None):
+        profile = get_object_or_404(PetSocialProfile.objects.select_related('pet'), pet_id=pet_id, pet__owner=request.user)
+        if 'is_public' not in request.data:
+            return Response({'error': 'Falta indicar si el perfil será público o privado.'}, status=status.HTTP_400_BAD_REQUEST)
+        profile.is_public = str(request.data.get('is_public')).lower() in {'1', 'true', 'yes', 'on'}
+        profile.save(update_fields=['is_public', 'updated_at'])
+        if profile.is_public:
+            # Las solicitudes pendientes pasan a ser seguidores cuando el dueño hace público el perfil.
+            pending = list(profile.pet.community_follow_requests.select_related('follower'))
+            for row in pending:
+                follow, created = PetFollow.objects.get_or_create(follower=row.follower, pet=profile.pet)
+                remove_follow_request_notification(profile.pet, row.follower)
+                if created:
+                    create_follow_notification(profile.pet, row.follower)
+            profile.pet.community_follow_requests.all().delete()
+        return Response({'id': profile.pet_id, 'is_public': profile.is_public})
+
+
+    @action(detail=False, methods=['get'])
+    def followers(self, request):
+        pet_id = request.query_params.get('pet_id')
+        pet = get_object_or_404(Pet, pk=pet_id, owner=request.user)
+        rows = PetFollow.objects.filter(pet=pet).select_related(
+            'follower', 'follower__clinic_profile', 'follower__business_profile',
+            'follower__shelter_profile',
+        ).order_by('-created_at')
+        return Response([
+            {
+                'follow_id': row.id,
+                'follower_id': row.follower_id,
+                'identity': primary_identity_for_user(row.follower, request=request),
+                'created_at': row.created_at,
+            }
+            for row in rows
+        ])
+
+    @action(detail=False, methods=['post'], url_path='remove-follower')
+    def remove_follower(self, request):
+        pet_id = request.data.get('pet_id')
+        follower_id = request.data.get('follower_id')
+        pet = get_object_or_404(Pet, pk=pet_id, owner=request.user)
+        deleted, _ = PetFollow.objects.filter(pet=pet, follower_id=follower_id).delete()
+        remove_follow_notification(pet, get_object_or_404(get_user_model(), pk=follower_id))
+        return Response({'removed': bool(deleted), 'followers_count': pet.social_followers.count()})
+
+
+class PetFollowRequestViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = PetFollowRequestSerializer
+
+    def get_queryset(self):
+        kind = str(self.request.query_params.get('kind') or 'received').lower()
+        queryset = PetFollowRequest.objects.select_related('follower', 'pet', 'pet__owner', 'pet__social_profile')
+        if kind == 'sent':
+            return queryset.filter(follower=self.request.user)
+        return queryset.filter(pet__owner=self.request.user)
+
+    @action(detail=True, methods=['post'])
+    def accept(self, request, pk=None):
+        follow_request = get_object_or_404(self.get_queryset().filter(pet__owner=request.user), pk=pk)
+        follow, created = PetFollow.objects.get_or_create(follower=follow_request.follower, pet=follow_request.pet)
+        if created:
+            create_follow_notification(follow_request.pet, follow_request.follower)
+        remove_follow_request_notification(follow_request.pet, follow_request.follower)
+        follow_request.delete()
+        return Response({'accepted': True, 'followers_count': follow.pet.social_followers.count()})
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        follow_request = get_object_or_404(self.get_queryset().filter(pet__owner=request.user), pk=pk)
+        remove_follow_request_notification(follow_request.pet, follow_request.follower)
+        follow_request.delete()
+        return Response({'rejected': True})
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        follow_request = get_object_or_404(PetFollowRequest, pk=pk, follower=request.user)
+        remove_follow_request_notification(follow_request.pet, follow_request.follower)
+        follow_request.delete()
+        return Response({'cancelled': True})
+
+
+class MutedUserViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = MutedUserSerializer
+
+    def get_queryset(self):
+        return MutedUser.objects.filter(user=self.request.user).select_related('muted')
+
+    @action(detail=False, methods=['post'])
+    def toggle(self, request):
+        user_id = request.data.get('user_id')
+        if not user_id or str(user_id) == str(request.user.id):
+            return Response({'error': 'Elegí otro usuario.'}, status=status.HTTP_400_BAD_REQUEST)
+        User = get_user_model()
+        muted_user = get_object_or_404(User, pk=user_id)
+        if users_blocked_between(request.user, muted_user):
+            return Response({'error': 'Ese usuario está bloqueado.'}, status=status.HTTP_400_BAD_REQUEST)
+        row, created = MutedUser.objects.get_or_create(user=request.user, muted=muted_user)
+        if created:
+            CommunityNotification.objects.filter(recipient=request.user, actor=muted_user).delete()
+        else:
+            row.delete()
+        return Response({'muted': created})
+
+
+class HiddenPostViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = HiddenPostSerializer
+
+    def get_queryset(self):
+        return HiddenPost.objects.filter(user=self.request.user).select_related(
+            'post__created_by', 'post__pet__owner', 'post__clinic__owner',
+            'post__business__owner', 'post__shelter__owner',
+        )
+
+    @action(detail=False, methods=['post'])
+    def hide(self, request):
+        post_id = request.data.get('post_id')
+        reason = request.data.get('reason', HiddenPost.REASON_HIDDEN)
+        if reason not in dict(HiddenPost.REASON_CHOICES):
+            return Response({'error': 'Motivo inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+        post = get_object_or_404(
+            visible_posts_for(Post.objects.filter(moderation_status=Post.STATUS_PUBLISHED), request.user),
+            pk=post_id,
+        )
+        if post.created_by_id == request.user.id:
+            return Response({'error': 'No necesitás ocultar tu propia publicación.'}, status=status.HTTP_400_BAD_REQUEST)
+        row, _ = HiddenPost.objects.update_or_create(user=request.user, post=post, defaults={'reason': reason})
+        return Response({'hidden': True, 'id': row.id, 'reason': row.reason})
+
+    @action(detail=True, methods=['post'])
+    def restore(self, request, pk=None):
+        row = get_object_or_404(self.get_queryset(), pk=pk)
+        post_id = row.post_id
+        row.delete()
+        return Response({'restored': True, 'post_id': post_id})
 
 
 class ReportViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, viewsets.GenericViewSet):
@@ -756,6 +1009,21 @@ class BlockedUserViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
                 Q(recipient=request.user, actor_id=blocked_id)
                 | Q(recipient_id=blocked_id, actor=request.user)
             ).delete()
+            MutedUser.objects.filter(Q(user=request.user, muted_id=blocked_id) | Q(user_id=blocked_id, muted=request.user)).delete()
+            PetFollow.objects.filter(
+                Q(follower=request.user, pet__owner_id=blocked_id)
+                | Q(follower=request.user, clinic__owner_id=blocked_id)
+                | Q(follower=request.user, business__owner_id=blocked_id)
+                | Q(follower=request.user, shelter__owner_id=blocked_id)
+                | Q(follower_id=blocked_id, pet__owner=request.user)
+                | Q(follower_id=blocked_id, clinic__owner=request.user)
+                | Q(follower_id=blocked_id, business__owner=request.user)
+                | Q(follower_id=blocked_id, shelter__owner=request.user)
+            ).delete()
+            PetFollowRequest.objects.filter(
+                Q(follower=request.user, pet__owner_id=blocked_id)
+                | Q(follower_id=blocked_id, pet__owner=request.user)
+            ).delete()
         else:
             block.delete()
         return Response({'blocked': created})
@@ -765,9 +1033,7 @@ class BlockedUserViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
 @permission_classes([permissions.AllowAny])
 def community_discover(request):
     user = request.user
-    blocked_ids = []
-    if user.is_authenticated:
-        blocked_ids = list(BlockedUser.objects.filter(blocker=user).values_list('blocked_id', flat=True))
+    blocked_ids = list(blocked_user_ids(user)) if user.is_authenticated else []
 
     suggested_pets = Pet.objects.filter(
         social_profile__is_public=True,
@@ -796,6 +1062,7 @@ def community_discover(request):
         birthday_date__gte=timezone.localdate() - timedelta(days=2),
         birthday_date__lte=timezone.localdate() + timedelta(days=1),
         pet__social_profile__is_public=True,
+        pet__owner__community_privacy__birthday_visibility=CommunityPrivacySettings.BIRTHDAY_COMMUNITY,
     ).select_related('pet__owner').order_by('-birthday_date')[:5]
 
     return Response({

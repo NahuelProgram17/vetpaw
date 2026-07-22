@@ -16,6 +16,7 @@ from pets.models import Pet
 from partners.models import BusinessProfile, ShelterProfile
 
 from .models import BlockedUser, Comment, PetFollow, Post
+from .privacy import privacy_for, visible_posts_for
 from .serializers import PostSerializer, absolute_file_url
 from .throttles import CommunityExploreThrottle
 
@@ -81,6 +82,8 @@ def _paginate(queryset, page, page_size):
 
 
 def _pet_payload(request, pet):
+    settings = privacy_for(pet.owner)
+    show_location = not settings or settings.show_location
     return {
         'id': pet.id,
         'kind': 'pet',
@@ -89,8 +92,8 @@ def _pet_payload(request, pet):
         'species_display': pet.get_species_display(),
         'breed': pet.breed,
         'photo': absolute_file_url(request, pet.photo),
-        'locality': pet.owner.locality,
-        'province': pet.owner.province,
+        'locality': pet.owner.locality if show_location else '',
+        'province': pet.owner.province if show_location else '',
         'followers_count': getattr(pet, 'followers_total', pet.social_followers.count()),
         'posts_count': getattr(pet, 'posts_total', pet.community_posts.filter(
             moderation_status=Post.STATUS_PUBLISHED,
@@ -483,6 +486,7 @@ def community_explore(request):
             distinct=True,
         ),
     )
+    posts = visible_posts_for(posts, request.user)
     if blocked_ids:
         posts = posts.exclude(created_by_id__in=blocked_ids)
     if query_terms:
@@ -550,11 +554,11 @@ def community_explore(request):
         lost = lost.filter(province__icontains=province)
     lost = lost.order_by('-created_at')
 
-    hashtag_source = Post.objects.filter(
+    hashtag_source = visible_posts_for(Post.objects.filter(
         is_public=True,
         moderation_status=Post.STATUS_PUBLISHED,
         created_at__gte=timezone.now() - timedelta(days=45),
-    )
+    ), request.user)
     if blocked_ids:
         hashtag_source = hashtag_source.exclude(created_by_id__in=blocked_ids)
     if locality:
@@ -636,10 +640,10 @@ def community_explore(request):
         )
 
     trending_hashtags = _hashtag_rows(hashtag_source, query='', limit=1000)[:10]
-    locality_source = Post.objects.filter(
+    locality_source = visible_posts_for(Post.objects.filter(
         is_public=True,
         moderation_status=Post.STATUS_PUBLISHED,
-    ).exclude(locality='')
+    ), request.user).exclude(locality='')
     if blocked_ids:
         locality_source = locality_source.exclude(created_by_id__in=blocked_ids)
     popular_localities = [

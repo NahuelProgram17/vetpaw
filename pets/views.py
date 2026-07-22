@@ -319,6 +319,10 @@ class BirthdayCelebrationViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         if not self.request.user.is_owner:
             return BirthdayCelebration.objects.none()
+        from community.models import CommunityPrivacySettings
+        privacy, _ = CommunityPrivacySettings.objects.get_or_create(user=self.request.user)
+        if privacy.birthday_visibility == CommunityPrivacySettings.BIRTHDAY_OFF:
+            return BirthdayCelebration.objects.none()
         from .birthdays import sync_birthday_celebrations
         sync_birthday_celebrations(self.request.user)
         queryset = BirthdayCelebration.objects.select_related('pet').filter(
@@ -333,6 +337,10 @@ class BirthdayCelebrationViewSet(viewsets.ReadOnlyModelViewSet):
     def current(self, request):
         if not request.user.is_owner:
             raise PermissionDenied('Solo los dueños pueden ver cumpleaños.')
+        from community.models import CommunityPrivacySettings
+        privacy, _ = CommunityPrivacySettings.objects.get_or_create(user=request.user)
+        if privacy.birthday_visibility == CommunityPrivacySettings.BIRTHDAY_OFF:
+            return Response([])
         from django.utils import timezone
         from .birthdays import sync_birthday_celebrations, BIRTHDAY_POPUP_WINDOW_DAYS
         sync_birthday_celebrations(request.user)

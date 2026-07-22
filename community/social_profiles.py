@@ -6,6 +6,7 @@ from partners.models import BusinessProfile, ShelterProfile
 from pets.models import Pet
 
 from .models import BlockedUser, PetFollow, PetSocialProfile, Post
+from .privacy import can_access_pet_profile, privacy_for
 
 
 def absolute_file_url(request, field):
@@ -77,9 +78,7 @@ def target_owner_id(target):
 def is_target_public(profile_type, target, viewer=None):
     if profile_type == 'pet':
         profile, _ = PetSocialProfile.objects.get_or_create(pet=target)
-        if profile.is_public:
-            return True
-        return bool(viewer and viewer.is_authenticated and viewer.id == target.owner_id)
+        return can_access_pet_profile(profile, viewer)
     if profile_type == 'clinic':
         return bool(target.is_active)
     return bool(target.is_active and target.owner.is_approved)
@@ -140,12 +139,14 @@ def primary_identity_for_user(user, request=None):
 def identity_for_target(profile_type, target, request=None):
     if profile_type == 'pet':
         social, _ = PetSocialProfile.objects.get_or_create(pet=target)
+        settings = privacy_for(target.owner)
+        subtitle_parts = [target.get_species_display(), target.breed]
         return {
             'type': 'pet',
             'id': target.id,
             'identifier': social.slug or str(target.id),
             'name': target.name,
-            'subtitle': ' · '.join(filter(None, [target.get_species_display(), target.breed])),
+            'subtitle': ' · '.join(filter(None, subtitle_parts)),
             'photo': absolute_file_url(request, target.photo),
             'profile_url': f'/mascotas/{social.slug or target.id}',
             'verified': False,
@@ -221,11 +222,13 @@ def profile_stats(profile_type, target, viewer=None):
     following = False
     if viewer and viewer.is_authenticated:
         following = PetFollow.objects.filter(follower=viewer, **target_kwargs(profile_type, target)).exists()
+    settings = privacy_for(owner)
+    is_owner = bool(viewer and viewer.is_authenticated and viewer.id == getattr(owner, 'id', None))
     return {
-        'followers_count': follow_queryset_for_target(profile_type, target).count(),
-        'following_count': following_count_for_user(owner),
-        'posts_count': posts.count(),
-        'paws_count': paws_count,
+        'followers_count': follow_queryset_for_target(profile_type, target).count() if is_owner or not settings or settings.show_followers else None,
+        'following_count': following_count_for_user(owner) if is_owner or not settings or settings.show_following else None,
+        'posts_count': posts.count() if is_owner or not settings or settings.show_activity else 0,
+        'paws_count': paws_count if is_owner or not settings or settings.show_paws else None,
         'following': following,
     }
 

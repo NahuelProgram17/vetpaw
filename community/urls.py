@@ -7,6 +7,10 @@ from .views import (
     BlockedUserViewSet,
     CommentViewSet,
     CommunityNotificationViewSet,
+    CommunityPrivacyViewSet,
+    HiddenPostViewSet,
+    MutedUserViewSet,
+    PetFollowRequestViewSet,
     CommunityPostViewSet,
     PetSocialProfileViewSet,
     PushSubscriptionViewSet,
@@ -25,6 +29,10 @@ router.register(r'community/push', PushSubscriptionViewSet, basename='community-
 router.register(r'community/pets', PetSocialProfileViewSet, basename='community-pet')
 router.register(r'community/reports', ReportViewSet, basename='community-report')
 router.register(r'community/blocks', BlockedUserViewSet, basename='community-block')
+router.register(r'community/privacy', CommunityPrivacyViewSet, basename='community-privacy')
+router.register(r'community/follow-requests', PetFollowRequestViewSet, basename='community-follow-request')
+router.register(r'community/mutes', MutedUserViewSet, basename='community-mute')
+router.register(r'community/hidden-posts', HiddenPostViewSet, basename='community-hidden-post')
 
 urlpatterns = [
     path('', include(router.urls)),

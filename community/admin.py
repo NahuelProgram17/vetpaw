@@ -1,13 +1,18 @@
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import BlockedUser, Comment, CommentReaction, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report, SavedPost
+from .models import (
+    BlockedUser, Comment, CommentReaction, CommunityNotification,
+    CommunityPrivacySettings, HiddenPost, MutedUser, PetFollow,
+    PetFollowRequest, PetSocialProfile, Post, PushSubscription,
+    Reaction, Report, SavedPost,
+)
 
 
 @admin.register(Post)
 class PostAdmin(admin.ModelAdmin):
     list_display = ('id', 'actor_name', 'post_type', 'moderation_status', 'locality', 'created_at')
-    list_filter = ('post_type', 'moderation_status', 'is_public', 'province')
+    list_filter = ('post_type', 'moderation_status', 'comment_permission', 'is_public', 'province')
     search_fields = ('text', 'pet__name', 'clinic__name', 'business__name', 'shelter__name', 'created_by__username')
     actions = ('publish_posts', 'hide_posts', 'remove_posts')
 
@@ -90,6 +95,10 @@ class PetFollowAdmin(admin.ModelAdmin):
 
 admin.site.register(SavedPost)
 admin.site.register(BlockedUser)
+admin.site.register(MutedUser)
+admin.site.register(HiddenPost)
+admin.site.register(PetFollowRequest)
+admin.site.register(CommunityPrivacySettings)
 
 
 @admin.register(CommunityNotification)

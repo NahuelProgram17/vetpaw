@@ -1,6 +1,9 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import PermissionDenied, ValidationError
+
+from community.privacy import privacy_for, users_blocked_between
 from django.db.models import Q
 from .models import Message
 from .serializers import MessageSerializer
@@ -18,6 +21,14 @@ class MessageViewSet(viewsets.ModelViewSet):
         ).select_related('sender', 'recipient', 'appointment', 'appointment__pet')
 
     def perform_create(self, serializer):
+        recipient = serializer.validated_data.get('recipient')
+        if recipient == self.request.user:
+            raise ValidationError({'recipient': 'No podés enviarte mensajes a vos mismo.'})
+        if users_blocked_between(self.request.user, recipient):
+            raise PermissionDenied('No podés enviar mensajes a este perfil.')
+        recipient_privacy = privacy_for(recipient)
+        if recipient_privacy and not recipient_privacy.allow_internal_messages:
+            raise PermissionDenied('Este perfil no está recibiendo mensajes internos.')
         serializer.save(sender=self.request.user)
 
     @action(detail=False, methods=['post'])

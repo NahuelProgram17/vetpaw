@@ -4,7 +4,8 @@ from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.utils import timezone
 
-from .models import BlockedUser, CommunityNotification
+from .models import BlockedUser, CommunityNotification, MutedUser
+from .privacy import privacy_for
 from .push_utils import schedule_push_notification
 
 MENTION_PATTERN = re.compile(r'(?<![\w@])@([\w.+-]{3,150})', re.UNICODE)
@@ -12,6 +13,11 @@ MENTION_PATTERN = re.compile(r'(?<![\w@])@([\w.+-]{3,150})', re.UNICODE)
 
 def _can_notify(recipient, actor):
     if not recipient or not actor or recipient.id == actor.id:
+        return False
+    settings = privacy_for(recipient)
+    if settings and not settings.social_notifications_enabled:
+        return False
+    if MutedUser.objects.filter(user=recipient, muted=actor).exists():
         return False
     return not BlockedUser.objects.filter(
         Q(blocker=recipient, blocked=actor) | Q(blocker=actor, blocked=recipient)
@@ -193,6 +199,31 @@ def sync_mention_notifications(text, actor, post, comment=None, exclude_recipien
             _refresh_notification(notification, extra_text=preview)
         created_notifications.append(notification)
     return created_notifications
+
+
+def create_follow_request_notification(pet, actor):
+    recipient = pet.owner
+    if not _can_notify(recipient, actor):
+        return None
+    notification, created = CommunityNotification.objects.get_or_create(
+        recipient=recipient,
+        actor=actor,
+        pet=pet,
+        notification_type=CommunityNotification.TYPE_FOLLOW_REQUEST,
+    )
+    if created:
+        schedule_push_notification(notification)
+        return notification
+    return _refresh_notification(notification)
+
+
+def remove_follow_request_notification(pet, actor):
+    CommunityNotification.objects.filter(
+        recipient=pet.owner,
+        actor=actor,
+        pet=pet,
+        notification_type=CommunityNotification.TYPE_FOLLOW_REQUEST,
+    ).delete()
 
 
 def _target_data(target):

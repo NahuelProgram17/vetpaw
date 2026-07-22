@@ -9,7 +9,12 @@ from partners.models import BusinessProfile, ShelterProfile
 from vetpaw.image_validation import validate_uploaded_image
 from users.permissions import is_community_moderator
 
-from .models import BlockedUser, Comment, CommentReaction, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report, SavedPost
+from .models import (
+    BlockedUser, Comment, CommentReaction, CommunityNotification, CommunityPrivacySettings,
+    HiddenPost, MutedUser, PetFollow, PetFollowRequest, PetSocialProfile, Post,
+    PushSubscription, Reaction, Report, SavedPost,
+)
+from .privacy import can_access_pet_profile, follow_request_pending, privacy_for
 
 
 def absolute_file_url(request, field):
@@ -46,16 +51,17 @@ class CommentReplySerializer(serializers.ModelSerializer):
     is_edited = serializers.SerializerMethodField()
     reactions_count = serializers.SerializerMethodField()
     reacted_by_me = serializers.SerializerMethodField()
+    can_hide = serializers.SerializerMethodField()
 
     class Meta:
         model = Comment
         fields = [
             'id', 'post', 'author', 'parent', 'text', 'created_at', 'updated_at',
-            'is_edited', 'can_edit', 'can_delete', 'reactions_count', 'reacted_by_me',
+            'is_edited', 'can_edit', 'can_delete', 'can_hide', 'reactions_count', 'reacted_by_me',
         ]
         read_only_fields = [
             'id', 'post', 'author', 'parent', 'created_at', 'updated_at', 'is_edited',
-            'can_edit', 'can_delete', 'reactions_count', 'reacted_by_me',
+            'can_edit', 'can_delete', 'can_hide', 'reactions_count', 'reacted_by_me',
         ]
 
     def _can_manage(self, obj):
@@ -68,7 +74,17 @@ class CommentReplySerializer(serializers.ModelSerializer):
         return self._can_manage(obj)
 
     def get_can_delete(self, obj):
-        return self._can_manage(obj)
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        return self._can_manage(obj) or obj.post.created_by_id == request.user.id
+
+    def get_can_hide(self, obj):
+        request = self.context.get('request')
+        return bool(
+            request and request.user.is_authenticated
+            and (obj.post.created_by_id == request.user.id or is_community_moderator(request.user))
+        )
 
     def get_is_edited(self, obj):
         return bool(obj.updated_at and obj.created_at and obj.updated_at > obj.created_at + timedelta(seconds=1))
@@ -132,11 +148,14 @@ class PostSerializer(serializers.ModelSerializer):
     can_delete = serializers.SerializerMethodField()
     lost_pet = serializers.SerializerMethodField()
     birthday = serializers.SerializerMethodField()
+    comments_enabled = serializers.SerializerMethodField()
+    can_manage_comments = serializers.SerializerMethodField()
 
     class Meta:
         model = Post
         fields = [
             'id', 'post_type', 'text', 'image', 'image_url', 'shares_count', 'province', 'locality',
+            'comment_permission', 'comments_enabled', 'can_manage_comments',
             'actor', 'reactions_count', 'comments_count', 'comments_preview',
             'reacted_by_me', 'saved_by_me', 'can_edit', 'is_edited', 'following_actor', 'can_delete',
             'lost_pet', 'birthday', 'created_at', 'updated_at',
@@ -145,7 +164,8 @@ class PostSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'post_type', 'actor', 'image_url', 'reactions_count', 'comments_count',
             'comments_preview', 'reacted_by_me', 'saved_by_me', 'can_edit', 'is_edited', 'following_actor',
-            'can_delete', 'lost_pet', 'birthday', 'shares_count', 'province', 'locality', 'created_at', 'updated_at',
+            'can_delete', 'lost_pet', 'birthday', 'comments_enabled', 'can_manage_comments',
+            'shares_count', 'province', 'locality', 'created_at', 'updated_at',
         ]
 
     def validate(self, attrs):
@@ -167,6 +187,11 @@ class PostSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         request = self.context['request']
         user = request.user
+        if not validated_data.get('comment_permission'):
+            settings = privacy_for(user)
+            validated_data['comment_permission'] = (
+                settings.default_comment_permission if settings else Post.COMMENTS_EVERYONE
+            )
         pet_id = request.data.get('pet')
         if user.role == 'owner':
             if not pet_id:
@@ -175,9 +200,7 @@ class PostSerializer(serializers.ModelSerializer):
                 pet = Pet.objects.get(pk=pet_id, owner=user)
             except Pet.DoesNotExist:
                 raise serializers.ValidationError({'pet': 'La mascota seleccionada no te pertenece.'})
-            profile, _ = PetSocialProfile.objects.get_or_create(pet=pet)
-            if not profile.is_public:
-                raise serializers.ValidationError({'pet': 'Activá el perfil público de esta mascota para publicar.'})
+            PetSocialProfile.objects.get_or_create(pet=pet)
             return Post.objects.create(
                 created_by=user,
                 pet=pet,
@@ -326,6 +349,12 @@ class PostSerializer(serializers.ModelSerializer):
         user = self._viewer()
         return bool(user and (obj.created_by_id == user.id or is_community_moderator(user)))
 
+    def get_comments_enabled(self, obj):
+        return obj.comment_permission != Post.COMMENTS_NONE
+
+    def get_can_manage_comments(self, obj):
+        return self.get_can_edit(obj)
+
     def get_lost_pet(self, obj):
         if not obj.related_lost_pet_id:
             return None
@@ -367,6 +396,7 @@ class PetSocialProfileSerializer(serializers.ModelSerializer):
     species_display = serializers.CharField(source='pet.get_species_display', read_only=True)
     breed = serializers.CharField(source='pet.breed', read_only=True)
     birth_date = serializers.DateField(source='pet.birth_date', read_only=True)
+    age = serializers.SerializerMethodField()
     temperament = serializers.CharField(source='pet.temperament', read_only=True)
     temperament_display = serializers.CharField(source='pet.get_temperament_display', read_only=True)
     photo = serializers.SerializerMethodField()
@@ -383,23 +413,49 @@ class PetSocialProfileSerializer(serializers.ModelSerializer):
     recent_posts = serializers.SerializerMethodField()
     gallery = serializers.SerializerMethodField()
     profile_url = serializers.SerializerMethodField()
+    access_granted = serializers.SerializerMethodField()
+    follow_request_pending = serializers.SerializerMethodField()
 
     class Meta:
         model = PetSocialProfile
         fields = [
-            'id', 'slug', 'profile_url', 'name', 'species', 'species_display', 'breed', 'birth_date',
+            'id', 'slug', 'profile_url', 'name', 'species', 'species_display', 'breed', 'birth_date', 'age',
             'temperament', 'temperament_display', 'photo', 'cover', 'cover_url',
             'bio', 'is_public', 'locality', 'province', 'owner_display_name',
             'followers_count', 'following_count', 'posts_count', 'paws_count',
-            'following', 'is_owner', 'recent_posts', 'gallery',
+            'following', 'is_owner', 'access_granted', 'follow_request_pending', 'recent_posts', 'gallery',
         ]
         extra_kwargs = {'cover': {'write_only': True, 'required': False, 'allow_null': True}}
         read_only_fields = [
-            'id', 'slug', 'profile_url', 'name', 'species', 'species_display', 'breed', 'birth_date',
+            'id', 'slug', 'profile_url', 'name', 'species', 'species_display', 'breed', 'birth_date', 'age',
             'temperament', 'temperament_display', 'photo', 'cover_url', 'locality',
             'province', 'owner_display_name', 'followers_count', 'following_count',
-            'posts_count', 'paws_count', 'following', 'is_owner', 'recent_posts', 'gallery',
+            'posts_count', 'paws_count', 'following', 'is_owner', 'access_granted',
+            'follow_request_pending', 'recent_posts', 'gallery',
         ]
+
+    def _viewer(self):
+        request = self.context.get('request')
+        return request.user if request else None
+
+    def _privacy(self, obj):
+        return privacy_for(obj.pet.owner)
+
+    def _has_access(self, obj):
+        return can_access_pet_profile(obj, self._viewer())
+
+    def get_access_granted(self, obj):
+        return self._has_access(obj)
+
+    def get_follow_request_pending(self, obj):
+        return follow_request_pending(obj, self._viewer())
+
+    def get_age(self, obj):
+        birth_date = obj.pet.birth_date
+        if not birth_date:
+            return None
+        today = timezone.localdate()
+        return today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
 
     def get_photo(self, obj):
         return absolute_file_url(self.context.get('request'), obj.pet.photo)
@@ -412,15 +468,27 @@ class PetSocialProfileSerializer(serializers.ModelSerializer):
         return owner.first_name or owner.username
 
     def get_followers_count(self, obj):
+        settings = self._privacy(obj)
+        viewer = self._viewer()
+        if settings and not settings.show_followers and not (viewer and viewer.is_authenticated and viewer.id == obj.pet.owner_id):
+            return None
         return obj.pet.social_followers.count()
 
     def get_following_count(self, obj):
+        settings = self._privacy(obj)
+        viewer = self._viewer()
+        if settings and not settings.show_following and not (viewer and viewer.is_authenticated and viewer.id == obj.pet.owner_id):
+            return None
         return PetFollow.objects.filter(follower=obj.pet.owner).count()
 
     def get_posts_count(self, obj):
         return obj.pet.community_posts.filter(moderation_status=Post.STATUS_PUBLISHED, is_public=True).count()
 
     def get_paws_count(self, obj):
+        settings = self._privacy(obj)
+        viewer = self._viewer()
+        if settings and not settings.show_paws and not (viewer and viewer.is_authenticated and viewer.id == obj.pet.owner_id):
+            return None
         from django.db.models import Count
         return obj.pet.community_posts.filter(
             moderation_status=Post.STATUS_PUBLISHED,
@@ -439,6 +507,9 @@ class PetSocialProfileSerializer(serializers.ModelSerializer):
         return bool(request and request.user.is_authenticated and obj.pet.owner_id == request.user.id)
 
     def get_recent_posts(self, obj):
+        settings = self._privacy(obj)
+        if not self._has_access(obj) or (settings and not settings.show_activity and not self.get_is_owner(obj)):
+            return []
         posts = obj.pet.community_posts.filter(moderation_status=Post.STATUS_PUBLISHED, is_public=True).select_related(
             'created_by', 'pet__owner', 'pet__social_profile', 'clinic__owner',
             'business__owner', 'shelter__owner', 'related_lost_pet', 'related_birthday'
@@ -447,6 +518,9 @@ class PetSocialProfileSerializer(serializers.ModelSerializer):
 
     def get_gallery(self, obj):
         request = self.context.get('request')
+        settings = self._privacy(obj)
+        if not self._has_access(obj) or (settings and not settings.show_activity and not self.get_is_owner(obj)):
+            return []
         posts = obj.pet.community_posts.filter(
             moderation_status=Post.STATUS_PUBLISHED,
             is_public=True,
@@ -460,6 +534,28 @@ class PetSocialProfileSerializer(serializers.ModelSerializer):
             }
             for post in posts
         ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        viewer = self._viewer()
+        is_owner = bool(viewer and viewer.is_authenticated and viewer.id == instance.pet.owner_id)
+        settings = self._privacy(instance)
+        if not is_owner and settings:
+            if not settings.show_location:
+                data['locality'] = ''
+                data['province'] = ''
+            if not settings.show_birth_date:
+                data['birth_date'] = None
+            if not settings.show_age:
+                data['age'] = None
+        if not data.get('access_granted') and not is_owner:
+            for key in ('breed', 'birth_date', 'age', 'temperament', 'temperament_display', 'locality', 'province', 'owner_display_name'):
+                data[key] = None if key in ('birth_date', 'age') else ''
+            data['recent_posts'] = []
+            data['gallery'] = []
+            data['posts_count'] = 0
+            data['paws_count'] = None
+        return data
 
     def validate_cover(self, value):
         return validate_uploaded_image(value, max_mb=5, label='La portada')
@@ -496,6 +592,57 @@ class ReportSerializer(serializers.ModelSerializer):
         if obj.reported_user_id:
             return {'type': 'user', 'id': obj.reported_user_id, 'text': obj.reported_user.username}
         return None
+
+
+class CommunityPrivacySettingsSerializer(serializers.ModelSerializer):
+    role = serializers.CharField(source='user.role', read_only=True)
+
+    class Meta:
+        model = CommunityPrivacySettings
+        fields = [
+            'role', 'default_comment_permission', 'show_location', 'show_birth_date',
+            'show_age', 'show_followers', 'show_following', 'show_paws',
+            'show_activity', 'birthday_visibility', 'show_phone', 'show_whatsapp',
+            'show_responsible_name', 'show_donation_info', 'allow_internal_messages',
+            'allow_appointment_requests', 'social_notifications_enabled',
+            'push_notifications_enabled', 'updated_at',
+        ]
+        read_only_fields = ['role', 'updated_at']
+
+
+class PetFollowRequestSerializer(serializers.ModelSerializer):
+    follower = CommunityUserSerializer(read_only=True)
+    pet_id = serializers.IntegerField(source='pet.id', read_only=True)
+    pet_name = serializers.CharField(source='pet.name', read_only=True)
+    pet_slug = serializers.CharField(source='pet.social_profile.slug', read_only=True)
+    pet_photo = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PetFollowRequest
+        fields = ['id', 'follower', 'pet_id', 'pet_name', 'pet_slug', 'pet_photo', 'created_at']
+        read_only_fields = fields
+
+    def get_pet_photo(self, obj):
+        return absolute_file_url(self.context.get('request'), obj.pet.photo)
+
+
+class MutedUserSerializer(serializers.ModelSerializer):
+    muted = CommunityUserSerializer(read_only=True)
+
+    class Meta:
+        model = MutedUser
+        fields = ['id', 'muted', 'created_at']
+        read_only_fields = fields
+
+
+class HiddenPostSerializer(serializers.ModelSerializer):
+    post = PostSerializer(read_only=True)
+    reason_display = serializers.CharField(source='get_reason_display', read_only=True)
+
+    class Meta:
+        model = HiddenPost
+        fields = ['id', 'post', 'reason', 'reason_display', 'created_at']
+        read_only_fields = fields
 
 
 class BlockedUserSerializer(serializers.ModelSerializer):
@@ -568,6 +715,8 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
         return notification_target_url(obj)
 
     def get_target_type(self, obj):
+        if obj.notification_type == CommunityNotification.TYPE_FOLLOW_REQUEST:
+            return 'follow_request'
         if obj.notification_type == CommunityNotification.TYPE_FOLLOW:
             return 'profile'
         if obj.comment_id:

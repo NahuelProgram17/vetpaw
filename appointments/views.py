@@ -91,8 +91,15 @@ class AppointmentViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         if not self.request.user.is_owner:
-            from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('Solo los dueños pueden pedir turnos.')
+        clinic = serializer.validated_data.get('clinic')
+        if clinic:
+            from community.privacy import privacy_for, users_blocked_between
+            if users_blocked_between(self.request.user, clinic.owner):
+                raise PermissionDenied('No podés solicitar turnos a este perfil.')
+            clinic_privacy = privacy_for(clinic.owner)
+            if clinic_privacy and not clinic_privacy.allow_appointment_requests:
+                raise PermissionDenied('Esta veterinaria no está recibiendo solicitudes de turno desde la comunidad.')
         appointment = serializer.save(owner=self.request.user)
 
         # Desde que un dueño pide un turno, la clínica ya puede ver

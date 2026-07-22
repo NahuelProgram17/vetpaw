@@ -18,6 +18,7 @@ class Clinic(models.Model):
     slug = models.SlugField(max_length=255, unique=True, blank=True)
     description = models.TextField(blank=True)
     address = models.CharField(max_length=255)
+    show_public_address = models.BooleanField(default=True)
     province = models.CharField(max_length=100)
     locality = models.CharField(max_length=100)
     phone = models.CharField(max_length=20, blank=True)

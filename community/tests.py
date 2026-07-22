@@ -13,7 +13,11 @@ from pets.models import Pet
 from partners.models import BusinessProfile, ShelterProfile
 from users.models import User
 
-from .models import BlockedUser, Comment, CommentReaction, CommunityNotification, PetFollow, PetSocialProfile, Post, PushSubscription, Reaction, Report
+from .models import (
+    BlockedUser, Comment, CommentReaction, CommunityNotification,
+    CommunityPrivacySettings, HiddenPost, MutedUser, PetFollow,
+    PetFollowRequest, PetSocialProfile, Post, PushSubscription, Reaction, Report,
+)
 
 
 class CommunityApiTests(APITestCase):
@@ -222,10 +226,15 @@ class CommunityApiTests(APITestCase):
         profile.save(update_fields=["is_public"])
 
         self.client.force_authenticate(self.other)
-        self.assertEqual(self.client.get(f"/api/community/pets/{self.pet.id}/").status_code, 404)
+        limited = self.client.get(f"/api/community/pets/{self.pet.id}/")
+        self.assertEqual(limited.status_code, 200)
+        self.assertFalse(limited.data['access_granted'])
+        self.assertEqual(limited.data['recent_posts'], [])
 
         self.client.force_authenticate(self.moderator)
-        self.assertEqual(self.client.get(f"/api/community/pets/{self.pet.id}/").status_code, 200)
+        visible = self.client.get(f"/api/community/pets/{self.pet.id}/")
+        self.assertEqual(visible.status_code, 200)
+        self.assertTrue(visible.data['access_granted'])
 
 
     def test_social_notifications_are_created_and_can_be_marked_read(self):
@@ -835,7 +844,13 @@ class CommunityApiTests(APITestCase):
 
         self.client.force_authenticate(self.other)
         hidden = self.client.get(f'/api/community/pets/{profile.slug}/')
-        self.assertEqual(hidden.status_code, 404)
+        self.assertEqual(hidden.status_code, 200)
+        self.assertFalse(hidden.data['access_granted'])
+        self.assertEqual(hidden.data['recent_posts'], [])
+
+        request_follow = self.client.post(f'/api/community/profiles/pet/{profile.slug}/follow/')
+        self.assertEqual(request_follow.status_code, 200)
+        self.assertTrue(request_follow.data['requested'])
 
         self.client.force_authenticate(self.owner)
         visible = self.client.get(f'/api/community/pets/{profile.slug}/')
@@ -990,3 +1005,158 @@ class CommunityApiTests(APITestCase):
             format='json',
         )
         self.assertEqual(response.status_code, 404)
+
+
+    def test_stage5_private_profile_follow_request_acceptance_unlocks_content(self):
+        profile = self.pet.social_profile
+        profile.is_public = False
+        profile.save(update_fields=['is_public'])
+        private_post = Post.objects.create(created_by=self.owner, pet=self.pet, text='Solo seguidores')
+
+        self.client.force_authenticate(self.other)
+        requested = self.client.post(f'/api/community/pets/{profile.slug}/follow/')
+        self.assertEqual(requested.status_code, 200)
+        self.assertTrue(requested.data['requested'])
+        request_row = PetFollowRequest.objects.get(follower=self.other, pet=self.pet)
+        self.assertTrue(CommunityNotification.objects.filter(
+            recipient=self.owner,
+            actor=self.other,
+            pet=self.pet,
+            notification_type=CommunityNotification.TYPE_FOLLOW_REQUEST,
+        ).exists())
+        feed_before = self.client.get('/api/community/posts/')
+        self.assertNotIn(private_post.id, {row['id'] for row in feed_before.data['results']})
+
+        self.client.force_authenticate(self.owner)
+        pending = self.client.get('/api/community/follow-requests/')
+        self.assertEqual(pending.status_code, 200)
+        self.assertEqual(len(pending.data), 1)
+        accepted = self.client.post(f'/api/community/follow-requests/{request_row.id}/accept/')
+        self.assertEqual(accepted.status_code, 200)
+        self.assertTrue(accepted.data['accepted'])
+        self.assertTrue(PetFollow.objects.filter(follower=self.other, pet=self.pet).exists())
+        self.assertFalse(PetFollowRequest.objects.filter(pk=request_row.pk).exists())
+
+        self.client.force_authenticate(self.other)
+        unlocked = self.client.get(f'/api/community/pets/{profile.slug}/')
+        self.assertEqual(unlocked.status_code, 200)
+        self.assertTrue(unlocked.data['access_granted'])
+        feed_after = self.client.get('/api/community/posts/')
+        self.assertIn(private_post.id, {row['id'] for row in feed_after.data['results']})
+
+    def test_stage5_comment_permissions_and_post_owner_can_hide_comment(self):
+        post = Post.objects.create(
+            created_by=self.owner,
+            pet=self.pet,
+            text='Solo seguidores comentan',
+            comment_permission=Post.COMMENTS_FOLLOWERS,
+        )
+        self.client.force_authenticate(self.other)
+        denied = self.client.post(
+            f'/api/community/posts/{post.id}/comments/',
+            {'text': 'Todavía no sigo'},
+            format='json',
+        )
+        self.assertEqual(denied.status_code, 403)
+
+        PetFollow.objects.create(follower=self.other, pet=self.pet)
+        allowed = self.client.post(
+            f'/api/community/posts/{post.id}/comments/',
+            {'text': 'Ahora sí puedo'},
+            format='json',
+        )
+        self.assertEqual(allowed.status_code, 201)
+        comment_id = allowed.data['id']
+
+        self.client.force_authenticate(self.owner)
+        hidden = self.client.post(f'/api/community/comments/{comment_id}/hide/')
+        self.assertEqual(hidden.status_code, 200)
+        self.assertTrue(hidden.data['hidden'])
+        self.assertEqual(
+            self.client.get(f'/api/community/posts/{post.id}/comments/').data,
+            [],
+        )
+        post.comment_permission = Post.COMMENTS_NONE
+        post.save(update_fields=['comment_permission'])
+        self.client.force_authenticate(self.other)
+        disabled = self.client.post(
+            f'/api/community/posts/{post.id}/comments/',
+            {'text': 'No debería publicarse'},
+            format='json',
+        )
+        self.assertEqual(disabled.status_code, 403)
+
+    def test_stage5_muting_and_hiding_remove_posts_from_personal_feed(self):
+        other_pet = Pet.objects.create(owner=self.other, name='Luna', species='cat', sex='female')
+        other_post = Post.objects.create(created_by=self.other, pet=other_pet, text='Contenido de Luna')
+        self.client.force_authenticate(self.owner)
+
+        muted = self.client.post('/api/community/mutes/toggle/', {'user_id': self.other.id}, format='json')
+        self.assertEqual(muted.status_code, 200)
+        self.assertTrue(muted.data['muted'])
+        self.assertTrue(MutedUser.objects.filter(user=self.owner, muted=self.other).exists())
+        feed_muted = self.client.get('/api/community/posts/')
+        self.assertNotIn(other_post.id, {row['id'] for row in feed_muted.data['results']})
+
+        unmuted = self.client.post('/api/community/mutes/toggle/', {'user_id': self.other.id}, format='json')
+        self.assertFalse(unmuted.data['muted'])
+        hidden = self.client.post(
+            '/api/community/hidden-posts/hide/',
+            {'post_id': other_post.id, 'reason': HiddenPost.REASON_NOT_INTERESTED},
+            format='json',
+        )
+        self.assertEqual(hidden.status_code, 200)
+        hidden_row = HiddenPost.objects.get(user=self.owner, post=other_post)
+        feed_hidden = self.client.get('/api/community/posts/')
+        self.assertNotIn(other_post.id, {row['id'] for row in feed_hidden.data['results']})
+        restored = self.client.post(f'/api/community/hidden-posts/{hidden_row.id}/restore/')
+        self.assertTrue(restored.data['restored'])
+        feed_restored = self.client.get('/api/community/posts/')
+        self.assertIn(other_post.id, {row['id'] for row in feed_restored.data['results']})
+
+    def test_stage5_privacy_settings_hide_personal_profile_fields(self):
+        self.pet.birth_date = '2020-07-22'
+        self.pet.save(update_fields=['birth_date'])
+        self.client.force_authenticate(self.owner)
+        updated = self.client.patch(
+            '/api/community/privacy/settings/',
+            {
+                'show_location': False,
+                'show_birth_date': False,
+                'show_age': False,
+                'show_followers': False,
+                'show_following': False,
+                'show_paws': False,
+                'show_activity': False,
+                'birthday_visibility': CommunityPrivacySettings.BIRTHDAY_OFF,
+            },
+            format='json',
+        )
+        self.assertEqual(updated.status_code, 200)
+
+        self.client.force_authenticate(self.other)
+        profile = self.client.get(f'/api/community/pets/{self.pet.social_profile.slug}/')
+        self.assertEqual(profile.status_code, 200)
+        self.assertEqual(profile.data['locality'], '')
+        self.assertIsNone(profile.data['birth_date'])
+        self.assertIsNone(profile.data['age'])
+        self.assertIsNone(profile.data['followers_count'])
+        self.assertIsNone(profile.data['following_count'])
+        self.assertIsNone(profile.data['paws_count'])
+        self.assertEqual(profile.data['recent_posts'], [])
+
+    def test_stage5_block_removes_follow_request_follow_and_notifications(self):
+        profile = self.pet.social_profile
+        profile.is_public = False
+        profile.save(update_fields=['is_public'])
+        self.client.force_authenticate(self.other)
+        self.client.post(f'/api/community/pets/{profile.slug}/follow/')
+        self.assertTrue(PetFollowRequest.objects.filter(follower=self.other, pet=self.pet).exists())
+
+        self.client.force_authenticate(self.owner)
+        blocked = self.client.post('/api/community/blocks/toggle/', {'user_id': self.other.id}, format='json')
+        self.assertEqual(blocked.status_code, 200)
+        self.assertTrue(blocked.data['blocked'])
+        self.assertFalse(PetFollowRequest.objects.filter(follower=self.other, pet=self.pet).exists())
+        self.assertFalse(PetFollow.objects.filter(follower=self.other, pet=self.pet).exists())
+        self.assertFalse(CommunityNotification.objects.filter(recipient=self.owner, actor=self.other).exists())

@@ -93,7 +93,7 @@ class PublicClinicSerializer(serializers.ModelSerializer):
         model = Clinic
         fields = [
             'id', 'owner_user_id', 'slug', 'profile_url', 'name', 'description',
-            'address', 'province', 'locality', 'phone', 'email',
+            'address', 'show_public_address', 'province', 'locality', 'phone', 'email',
             'logo', 'logo_url', 'cover', 'cover_url', 'is_24h', 'services',
             'rating_avg', 'reviews_count', 'reviews', 'members_count', 'photos',
             'has_schedule', 'followers_count', 'following_count', 'posts_count',
@@ -202,6 +202,27 @@ class PublicClinicSerializer(serializers.ModelSerializer):
             for post in rows
         ]
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        from community.privacy import privacy_for
+        settings = privacy_for(instance.owner)
+        can_edit = self.get_can_edit(instance)
+        if not can_edit and not instance.show_public_address:
+            data['address'] = ''
+        if settings and not can_edit:
+            if not settings.show_location:
+                data['address'] = ''
+                data['province'] = ''
+                data['locality'] = ''
+            if not settings.show_phone:
+                data['phone'] = ''
+            if not settings.show_activity:
+                data['recent_posts'] = []
+                data['gallery'] = []
+        data['allow_internal_messages'] = settings.allow_internal_messages if settings else True
+        data['allow_appointment_requests'] = settings.allow_appointment_requests if settings else True
+        return data
+
     def validate_logo(self, value):
         return validate_uploaded_image(value, max_mb=3, label='El logo de la veterinaria')
 
@@ -222,7 +243,7 @@ class ClinicSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'owner', 'name', 'slug', 'description', 'address',
             'province', 'locality', 'phone', 'email',
-            'logo', 'cover', 'is_active', 'is_24h', 'services',
+            'logo', 'cover', 'show_public_address', 'is_active', 'is_24h', 'services',
             'members_count', 'rating_avg', 'reviews_count',
             'distance_km', 'is_member', 'has_schedule', 'created_at'
         ]

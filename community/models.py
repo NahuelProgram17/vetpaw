@@ -60,6 +60,15 @@ class Post(models.Model):
         (STATUS_REMOVED, 'Eliminada por moderación'),
     ]
 
+    COMMENTS_EVERYONE = 'everyone'
+    COMMENTS_FOLLOWERS = 'followers'
+    COMMENTS_NONE = 'none'
+    COMMENT_PERMISSION_CHOICES = [
+        (COMMENTS_EVERYONE, 'Todos pueden comentar'),
+        (COMMENTS_FOLLOWERS, 'Solo seguidores'),
+        (COMMENTS_NONE, 'Comentarios desactivados'),
+    ]
+
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -102,6 +111,11 @@ class Post(models.Model):
     province = models.CharField(max_length=100, blank=True)
     locality = models.CharField(max_length=100, blank=True)
     is_public = models.BooleanField(default=True)
+    comment_permission = models.CharField(
+        max_length=20,
+        choices=COMMENT_PERMISSION_CHOICES,
+        default=COMMENTS_EVERYONE,
+    )
     moderation_status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PUBLISHED)
     related_lost_pet = models.OneToOneField(
         'lost_pets.LostPet',
@@ -354,6 +368,129 @@ class SavedPost(models.Model):
         ordering = ['-created_at']
 
 
+class PetFollowRequest(models.Model):
+    follower = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='community_follow_requests_sent',
+    )
+    pet = models.ForeignKey(
+        'pets.Pet',
+        on_delete=models.CASCADE,
+        related_name='community_follow_requests',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['follower', 'pet'],
+                name='unique_private_pet_follow_request',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['pet', '-created_at'], name='comm_freq_pet_date_idx'),
+            models.Index(fields=['follower', '-created_at'], name='comm_freq_user_date_idx'),
+        ]
+        ordering = ['-created_at']
+
+
+class MutedUser(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='community_mutes_made',
+    )
+    muted = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='community_mutes_received',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'muted'], name='unique_community_user_mute'),
+            models.CheckConstraint(condition=~Q(user=models.F('muted')), name='cannot_mute_self_community'),
+        ]
+        ordering = ['-created_at']
+
+
+class HiddenPost(models.Model):
+    REASON_HIDDEN = 'hidden'
+    REASON_NOT_INTERESTED = 'not_interested'
+    REASON_CHOICES = [
+        (REASON_HIDDEN, 'Ocultada'),
+        (REASON_NOT_INTERESTED, 'No me interesa'),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='hidden_community_posts',
+    )
+    post = models.ForeignKey(
+        Post,
+        on_delete=models.CASCADE,
+        related_name='hidden_by_users',
+    )
+    reason = models.CharField(max_length=20, choices=REASON_CHOICES, default=REASON_HIDDEN)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'post'], name='unique_hidden_community_post')
+        ]
+        ordering = ['-created_at']
+
+
+class CommunityPrivacySettings(models.Model):
+    BIRTHDAY_COMMUNITY = 'community'
+    BIRTHDAY_ACCOUNT = 'account'
+    BIRTHDAY_OFF = 'off'
+    BIRTHDAY_CHOICES = [
+        (BIRTHDAY_COMMUNITY, 'Publicar en la comunidad'),
+        (BIRTHDAY_ACCOUNT, 'Mostrar solo en mi cuenta'),
+        (BIRTHDAY_OFF, 'No mostrar cumpleaños'),
+    ]
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='community_privacy',
+    )
+    default_comment_permission = models.CharField(
+        max_length=20,
+        choices=Post.COMMENT_PERMISSION_CHOICES,
+        default=Post.COMMENTS_EVERYONE,
+    )
+    show_location = models.BooleanField(default=True)
+    show_birth_date = models.BooleanField(default=True)
+    show_age = models.BooleanField(default=True)
+    show_followers = models.BooleanField(default=True)
+    show_following = models.BooleanField(default=True)
+    show_paws = models.BooleanField(default=True)
+    show_activity = models.BooleanField(default=True)
+    birthday_visibility = models.CharField(
+        max_length=20,
+        choices=BIRTHDAY_CHOICES,
+        default=BIRTHDAY_COMMUNITY,
+    )
+    show_phone = models.BooleanField(default=True)
+    show_whatsapp = models.BooleanField(default=True)
+    show_responsible_name = models.BooleanField(default=True)
+    show_donation_info = models.BooleanField(default=True)
+    allow_internal_messages = models.BooleanField(default=True)
+    allow_appointment_requests = models.BooleanField(default=True)
+    social_notifications_enabled = models.BooleanField(default=True)
+    push_notifications_enabled = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'Privacidad de {self.user}'
+
+
 class BlockedUser(models.Model):
     blocker = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='community_blocks_made')
     blocked = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='community_blocks_received')
@@ -374,6 +511,7 @@ class CommunityNotification(models.Model):
     TYPE_COMMENT_REACTION = 'comment_reaction'
     TYPE_REPLY = 'reply'
     TYPE_MENTION = 'mention'
+    TYPE_FOLLOW_REQUEST = 'follow_request'
     TYPE_CHOICES = [
         (TYPE_REACTION, 'Patita en publicación'),
         (TYPE_COMMENT, 'Comentario en publicación'),
@@ -381,6 +519,7 @@ class CommunityNotification(models.Model):
         (TYPE_COMMENT_REACTION, 'Patita en comentario'),
         (TYPE_REPLY, 'Respuesta a comentario'),
         (TYPE_MENTION, 'Mención'),
+        (TYPE_FOLLOW_REQUEST, 'Solicitud de seguimiento'),
     ]
 
     recipient = models.ForeignKey(
@@ -473,6 +612,11 @@ class CommunityNotification(models.Model):
                 fields=['recipient', 'actor', 'shelter', 'notification_type'],
                 condition=Q(notification_type='follow', shelter__isnull=False),
                 name='unique_shelter_follow_notification',
+            ),
+            models.UniqueConstraint(
+                fields=['recipient', 'actor', 'pet', 'notification_type'],
+                condition=Q(notification_type='follow_request', pet__isnull=False),
+                name='unique_follow_request_notification',
             ),
             models.UniqueConstraint(
                 fields=['recipient', 'actor', 'comment', 'notification_type'],

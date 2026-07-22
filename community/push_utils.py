@@ -7,6 +7,7 @@ from django.utils import timezone
 from pywebpush import WebPushException, webpush
 
 from .models import CommunityNotification, PushSubscription
+from .privacy import privacy_for
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,9 @@ def notification_message(notification):
         return f'{actor_name} respondió tu comentario.'
     if notification.notification_type == CommunityNotification.TYPE_MENTION:
         return f'{actor_name} te mencionó en VetPaw.'
+    if notification.notification_type == CommunityNotification.TYPE_FOLLOW_REQUEST:
+        target_name = notification.pet.name if notification.pet_id else 'tu perfil'
+        return f'{actor_name} quiere seguir a {target_name}.'
     if notification.notification_type == CommunityNotification.TYPE_FOLLOW:
         if notification.pet_id:
             target_name = notification.pet.name
@@ -84,6 +88,9 @@ def notification_message(notification):
 
 
 def notification_target_url(notification):
+    if notification.notification_type == CommunityNotification.TYPE_FOLLOW_REQUEST:
+        target_name = notification.pet.name if notification.pet_id else 'tu perfil'
+        return f'{actor_name} quiere seguir a {target_name}.'
     if notification.notification_type == CommunityNotification.TYPE_FOLLOW:
         if notification.pet_id:
             profile = getattr(notification.pet, 'social_profile', None)
@@ -217,6 +224,9 @@ def send_push_for_notification(notification_id):
 
 def schedule_push_notification(notification):
     if not notification or not push_is_configured():
+        return
+    settings = privacy_for(notification.recipient)
+    if settings and not settings.push_notifications_enabled:
         return
     notification_id = notification.pk
     transaction.on_commit(lambda: send_push_for_notification(notification_id))

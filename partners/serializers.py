@@ -145,10 +145,32 @@ class ProfileSerializerMixin:
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        if not self.get_can_edit(instance):
+        from community.privacy import privacy_for
+        settings = privacy_for(instance.owner)
+        can_edit = self.get_can_edit(instance)
+        if not can_edit:
             for field in self.PRIVATE_FIELDS:
                 data.pop(field, None)
             data.pop('address', None)
+            if settings:
+                if not settings.show_location:
+                    data['province'] = ''
+                    data['locality'] = ''
+                    data['public_address'] = ''
+                if not settings.show_phone:
+                    data['phone'] = ''
+                if not settings.show_whatsapp:
+                    data['whatsapp'] = ''
+                if not settings.show_responsible_name:
+                    data['responsible_name'] = ''
+                if not settings.show_activity:
+                    data['recent_posts'] = []
+                    data['gallery'] = []
+                if self.PROFILE_TYPE == 'shelter' and not settings.show_donation_info:
+                    data['donation_alias'] = ''
+                    data['donation_needs'] = ''
+        data['allow_internal_messages'] = settings.allow_internal_messages if settings else True
+        data['allow_appointment_requests'] = settings.allow_appointment_requests if settings else True
         return data
 
 
