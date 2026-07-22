@@ -44,6 +44,10 @@ def _clean(value, max_length):
     return str(value or '').strip()[:max_length]
 
 
+def _truthy(value):
+    return str(value or '').strip().lower() in {'1', 'true', 'yes', 'si', 'sí'}
+
+
 def _positive_int(value, default, maximum):
     try:
         return min(max(int(value), 1), maximum)
@@ -147,6 +151,9 @@ def _business_payload(request, item):
         'is_24h': item.is_24h,
         'home_service': item.home_service,
         'delivery': item.delivery,
+        'accepts_reservations': item.accepts_reservations,
+        'catalog_count': getattr(item, 'catalog_total', item.catalog_items.filter(is_active=True).count()),
+        'promotions_count': getattr(item, 'promotions_total', 0),
         'services': (item.services if isinstance(item.services, list) else [])[:5],
         'is_verified': item.is_verified,
         'followers_count': getattr(item, 'followers_total', item.social_followers.count()),
@@ -406,6 +413,16 @@ def community_explore(request):
             'community_posts',
             filter=Q(community_posts__moderation_status=Post.STATUS_PUBLISHED, community_posts__is_public=True),
             distinct=True,
+        ),
+        catalog_total=Count('catalog_items', filter=Q(catalog_items__is_active=True), distinct=True),
+        promotions_total=Count(
+            'commerce_promotions',
+            filter=Q(
+                commerce_promotions__is_active=True,
+                commerce_promotions__starts_at__lte=timezone.now(),
+                commerce_promotions__ends_at__gte=timezone.now(),
+            ),
+            distinct=True,
         )
     )
     if blocked_ids:
@@ -423,6 +440,12 @@ def community_explore(request):
         businesses = businesses.filter(province__icontains=province)
     if only_24h:
         businesses = businesses.filter(is_24h=True)
+    if _truthy(request.query_params.get('home_service')):
+        businesses = businesses.filter(home_service=True)
+    if _truthy(request.query_params.get('accepts_reservations')):
+        businesses = businesses.filter(accepts_reservations=True)
+    if _truthy(request.query_params.get('has_promotions')):
+        businesses = businesses.filter(promotions_total__gt=0)
     business_type = _clean(request.query_params.get('business_type'), 30)
     if business_type in dict(BusinessProfile.BUSINESS_TYPE_CHOICES):
         businesses = businesses.filter(business_type=business_type)

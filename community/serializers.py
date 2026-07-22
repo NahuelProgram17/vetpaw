@@ -150,6 +150,7 @@ class PostSerializer(serializers.ModelSerializer):
     birthday = serializers.SerializerMethodField()
     comments_enabled = serializers.SerializerMethodField()
     can_manage_comments = serializers.SerializerMethodField()
+    commerce_link = serializers.SerializerMethodField()
 
     class Meta:
         model = Post
@@ -158,13 +159,13 @@ class PostSerializer(serializers.ModelSerializer):
             'comment_permission', 'comments_enabled', 'can_manage_comments',
             'actor', 'reactions_count', 'comments_count', 'comments_preview',
             'reacted_by_me', 'saved_by_me', 'can_edit', 'is_edited', 'following_actor', 'can_delete',
-            'lost_pet', 'birthday', 'created_at', 'updated_at',
+            'lost_pet', 'birthday', 'commerce_link', 'created_at', 'updated_at',
         ]
         extra_kwargs = {'image': {'write_only': True, 'required': False, 'allow_null': True}}
         read_only_fields = [
             'id', 'post_type', 'actor', 'image_url', 'reactions_count', 'comments_count',
             'comments_preview', 'reacted_by_me', 'saved_by_me', 'can_edit', 'is_edited', 'following_actor',
-            'can_delete', 'lost_pet', 'birthday', 'comments_enabled', 'can_manage_comments',
+            'can_delete', 'lost_pet', 'birthday', 'commerce_link', 'comments_enabled', 'can_manage_comments',
             'shares_count', 'province', 'locality', 'created_at', 'updated_at',
         ]
 
@@ -354,6 +355,33 @@ class PostSerializer(serializers.ModelSerializer):
 
     def get_can_manage_comments(self, obj):
         return self.get_can_edit(obj)
+
+    def get_commerce_link(self, obj):
+        try:
+            item = obj.catalog_item
+        except Exception:
+            item = None
+        if item:
+            return {
+                'type': 'catalog_item',
+                'id': item.id,
+                'title': item.title,
+                'url': f'/negocios/{item.business.slug}/catalogo/{item.id}',
+                'action': 'Ver producto o servicio',
+            }
+        try:
+            promotion = obj.commerce_promotion
+        except Exception:
+            promotion = None
+        if promotion:
+            return {
+                'type': 'promotion',
+                'id': promotion.id,
+                'title': promotion.title,
+                'url': f'/negocios/{promotion.business.slug}',
+                'action': 'Ver promoción',
+            }
+        return None
 
     def get_lost_pet(self, obj):
         if not obj.related_lost_pet_id:
@@ -719,6 +747,12 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
             return 'follow_request'
         if obj.notification_type == CommunityNotification.TYPE_FOLLOW:
             return 'profile'
+        if obj.notification_type in {
+            CommunityNotification.TYPE_BUSINESS_INQUIRY,
+            CommunityNotification.TYPE_BUSINESS_RESERVATION,
+            CommunityNotification.TYPE_BUSINESS_RESERVATION_UPDATE,
+        }:
+            return 'business'
         if obj.comment_id:
             return 'comment'
         if obj.post_id:

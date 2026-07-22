@@ -70,7 +70,29 @@ class BusinessProfileViewSet(OwnProfileMixin, mixins.ListModelMixin, mixins.Retr
             queryset = queryset.filter(business_type=business_type)
         if str(self.request.query_params.get('is_24h') or '').lower() in ('1', 'true', 'yes'):
             queryset = queryset.filter(is_24h=True)
+        if str(self.request.query_params.get('home_service') or '').lower() in ('1', 'true', 'yes'):
+            queryset = queryset.filter(home_service=True)
+        if str(self.request.query_params.get('accepts_reservations') or '').lower() in ('1', 'true', 'yes'):
+            queryset = queryset.filter(accepts_reservations=True)
+        if str(self.request.query_params.get('has_promotions') or '').lower() in ('1', 'true', 'yes'):
+            from django.utils import timezone
+            queryset = queryset.filter(
+                commerce_promotions__is_active=True,
+                commerce_promotions__starts_at__lte=timezone.now(),
+                commerce_promotions__ends_at__gte=timezone.now(),
+            ).distinct()
         return queryset
+
+    def retrieve(self, request, *args, **kwargs):
+        response = super().retrieve(request, *args, **kwargs)
+        profile = self.get_object()
+        if not request.user.is_authenticated or request.user.id != profile.owner_id:
+            from commerce.models import BusinessProfileView
+            BusinessProfileView.objects.create(
+                business=profile,
+                user=request.user if request.user.is_authenticated else None,
+            )
+        return response
 
 
 class ShelterProfileViewSet(OwnProfileMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.UpdateModelMixin, viewsets.GenericViewSet):

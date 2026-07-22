@@ -512,6 +512,9 @@ class CommunityNotification(models.Model):
     TYPE_REPLY = 'reply'
     TYPE_MENTION = 'mention'
     TYPE_FOLLOW_REQUEST = 'follow_request'
+    TYPE_BUSINESS_INQUIRY = 'business_inquiry'
+    TYPE_BUSINESS_RESERVATION = 'business_reservation'
+    TYPE_BUSINESS_RESERVATION_UPDATE = 'business_reservation_update'
     TYPE_CHOICES = [
         (TYPE_REACTION, 'Patita en publicación'),
         (TYPE_COMMENT, 'Comentario en publicación'),
@@ -520,6 +523,9 @@ class CommunityNotification(models.Model):
         (TYPE_REPLY, 'Respuesta a comentario'),
         (TYPE_MENTION, 'Mención'),
         (TYPE_FOLLOW_REQUEST, 'Solicitud de seguimiento'),
+        (TYPE_BUSINESS_INQUIRY, 'Consulta comercial'),
+        (TYPE_BUSINESS_RESERVATION, 'Nueva reserva comercial'),
+        (TYPE_BUSINESS_RESERVATION_UPDATE, 'Actualización de reserva comercial'),
     ]
 
     recipient = models.ForeignKey(
@@ -574,7 +580,7 @@ class CommunityNotification(models.Model):
         null=True,
         blank=True,
     )
-    notification_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    notification_type = models.CharField(max_length=32, choices=TYPE_CHOICES)
     extra_text = models.CharField(max_length=300, blank=True)
     is_read = models.BooleanField(default=False)
     read_at = models.DateTimeField(null=True, blank=True)

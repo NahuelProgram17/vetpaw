@@ -191,6 +191,11 @@ class BusinessProfileSerializer(ProfileSerializerMixin, serializers.ModelSeriali
     can_edit = serializers.SerializerMethodField()
     public_address = serializers.SerializerMethodField()
     business_type_display = serializers.CharField(source='get_business_type_display', read_only=True)
+    catalog_preview = serializers.SerializerMethodField()
+    active_promotions = serializers.SerializerMethodField()
+    catalog_count = serializers.SerializerMethodField()
+    favorites_count = serializers.SerializerMethodField()
+    is_favorite = serializers.SerializerMethodField()
 
     PRIVATE_FIELDS = {'tax_id', 'legal_name'}
     COMPLETION_FIELDS = (
@@ -206,18 +211,20 @@ class BusinessProfileSerializer(ProfileSerializerMixin, serializers.ModelSeriali
             'phone', 'whatsapp', 'province', 'locality', 'address', 'public_address',
             'show_public_address', 'latitude', 'longitude', 'species', 'services',
             'opening_hours', 'home_service', 'delivery', 'online_sales',
-            'appointment_required', 'is_24h', 'payment_methods', 'price_range',
+            'appointment_required', 'accepts_reservations', 'is_24h', 'payment_methods', 'price_range',
             'promotions', 'tax_id', 'legal_name', 'is_verified', 'is_active',
             'owner_user_id', 'followers_count', 'following_count', 'posts_count',
             'paws_count', 'following', 'recent_posts', 'gallery',
-            'profile_url', 'completion_percentage', 'can_edit', 'created_at', 'updated_at',
+            'profile_url', 'completion_percentage', 'can_edit', 'catalog_preview',
+            'active_promotions', 'catalog_count', 'favorites_count', 'is_favorite', 'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'slug', 'business_type_display', 'logo_url', 'cover_url',
             'public_address', 'is_verified', 'is_active', 'owner_user_id',
             'followers_count', 'following_count', 'posts_count', 'paws_count',
             'following', 'recent_posts', 'gallery', 'profile_url',
-            'completion_percentage', 'can_edit', 'created_at', 'updated_at',
+            'completion_percentage', 'can_edit', 'catalog_preview', 'active_promotions',
+            'catalog_count', 'favorites_count', 'is_favorite', 'created_at', 'updated_at',
         ]
         extra_kwargs = {
             'logo': {'write_only': True, 'required': False, 'allow_null': True},
@@ -233,6 +240,35 @@ class BusinessProfileSerializer(ProfileSerializerMixin, serializers.ModelSeriali
 
     def validate_payment_methods(self, value):
         return self._json_value(value, list, 'Los métodos de pago')[:20]
+
+    def get_catalog_preview(self, obj):
+        from commerce.models import CatalogItem
+        from commerce.serializers import CatalogItemSerializer
+        items = CatalogItem.objects.filter(business=obj, is_active=True).order_by('-created_at')[:50]
+        return CatalogItemSerializer(items, many=True, context=self.context).data
+
+    def get_active_promotions(self, obj):
+        from django.utils import timezone
+        from commerce.models import Promotion
+        from commerce.serializers import PromotionSerializer
+        now = timezone.now()
+        promotions = Promotion.objects.filter(
+            business=obj, is_active=True, starts_at__lte=now, ends_at__gte=now,
+        ).order_by('ends_at')[:20]
+        return PromotionSerializer(promotions, many=True, context=self.context).data
+
+    def get_catalog_count(self, obj):
+        return obj.catalog_items.filter(is_active=True).count()
+
+    def get_favorites_count(self, obj):
+        return obj.favorites.count()
+
+    def get_is_favorite(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        from commerce.models import BusinessFavorite
+        return BusinessFavorite.objects.filter(user=request.user, business=obj).exists()
 
     def get_profile_url(self, obj):
         return f'/negocios/{obj.slug}'

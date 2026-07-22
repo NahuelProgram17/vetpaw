@@ -84,13 +84,24 @@ def notification_message(notification):
         else:
             target_name = 'tu perfil'
         return f'{actor_name} comenzó a seguir a {target_name}.'
+    if notification.notification_type == CommunityNotification.TYPE_BUSINESS_INQUIRY:
+        return f'{actor_name} envió una consulta a tu negocio. {notification.extra_text}'.strip()
+    if notification.notification_type == CommunityNotification.TYPE_BUSINESS_RESERVATION:
+        return f'{actor_name} solicitó una reserva. {notification.extra_text}'.strip()
+    if notification.notification_type == CommunityNotification.TYPE_BUSINESS_RESERVATION_UPDATE:
+        return f'{actor_name} actualizó una reserva. {notification.extra_text}'.strip()
     return 'Tenés nueva actividad en VetPaw.'
 
 
 def notification_target_url(notification):
+    if notification.notification_type == CommunityNotification.TYPE_BUSINESS_INQUIRY:
+        return '/business/comercial?tab=consultas'
+    if notification.notification_type == CommunityNotification.TYPE_BUSINESS_RESERVATION:
+        return '/business/comercial?tab=reservas'
+    if notification.notification_type == CommunityNotification.TYPE_BUSINESS_RESERVATION_UPDATE:
+        return '/mis-favoritos?tab=reservas'
     if notification.notification_type == CommunityNotification.TYPE_FOLLOW_REQUEST:
-        target_name = notification.pet.name if notification.pet_id else 'tu perfil'
-        return f'{actor_name} quiere seguir a {target_name}.'
+        return '/configuracion/privacidad?tab=solicitudes'
     if notification.notification_type == CommunityNotification.TYPE_FOLLOW:
         if notification.pet_id:
             profile = getattr(notification.pet, 'social_profile', None)
@@ -203,7 +214,8 @@ def send_push_for_notification(notification_id):
 
     try:
         notification = CommunityNotification.objects.select_related(
-            'actor', 'actor__clinic_profile', 'pet', 'post__pet',
+            'actor', 'actor__clinic_profile', 'actor__business_profile',
+            'actor__shelter_profile', 'pet', 'business', 'shelter', 'post__pet',
             'post__clinic', 'post__related_lost_pet',
         ).get(pk=notification_id)
     except CommunityNotification.DoesNotExist:

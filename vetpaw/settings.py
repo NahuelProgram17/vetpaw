@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'community.apps.CommunityConfig',
     'partners.apps.PartnersConfig',
     'adoptions.apps.AdoptionsConfig',
+    'commerce.apps.CommerceConfig',
     'axes',
 ]
 

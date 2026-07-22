@@ -98,6 +98,7 @@ class BusinessProfile(SluggedProfileMixin):
     delivery = models.BooleanField(default=False)
     online_sales = models.BooleanField(default=False)
     appointment_required = models.BooleanField(default=False)
+    accepts_reservations = models.BooleanField(default=False)
     is_24h = models.BooleanField(default=False)
     payment_methods = models.JSONField(default=list, blank=True)
     price_range = models.CharField(max_length=80, blank=True)
