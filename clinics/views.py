@@ -1,7 +1,7 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.utils import timezone
 from math import radians, sin, cos, sqrt, atan2
 from datetime import datetime, timedelta, date
@@ -18,9 +18,12 @@ from .serializers import (
 
 class ClinicViewSet(viewsets.ModelViewSet):
     serializer_class = ClinicSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_permissions(self):
-        if self.action in ['list', 'retrieve', 'public_profile', 'available_slots']:
+        if self.action in ['list', 'retrieve', 'available_slots']:
+            return [permissions.AllowAny()]
+        if self.action == 'public_profile' and self.request.method == 'GET':
             return [permissions.AllowAny()]
         if self.action == 'create':
             return [permissions.AllowAny()]
@@ -62,12 +65,28 @@ class ClinicViewSet(viewsets.ModelViewSet):
 
         return qs
 
-    @action(detail=False, methods=['get'], url_path='perfil/(?P<slug>[^/.]+)', permission_classes=[permissions.AllowAny])
+    @action(detail=False, methods=['get', 'patch'], url_path='perfil/(?P<slug>[^/.]+)')
     def public_profile(self, request, slug=None):
         try:
-            clinic = Clinic.objects.get(slug=slug, is_active=True)
+            clinic = Clinic.objects.select_related('owner').get(slug=slug, is_active=True)
         except Clinic.DoesNotExist:
             return Response({'error': 'Clínica no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.method == 'PATCH':
+            if request.user.id != clinic.owner_id and not request.user.is_superuser:
+                return Response({'error': 'Solo podés editar tu propia veterinaria.'}, status=status.HTTP_403_FORBIDDEN)
+            allowed = {'description', 'cover', 'logo'}
+            payload = {key: value for key, value in request.data.items() if key in allowed}
+            serializer = PublicClinicSerializer(
+                clinic,
+                data=payload,
+                partial=True,
+                context={'request': request},
+            )
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data)
+
         serializer = PublicClinicSerializer(clinic, context={'request': request})
         return Response(serializer.data)
 

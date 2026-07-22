@@ -2,6 +2,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
+from django.utils.text import slugify
 
 
 class PetSocialProfile(models.Model):
@@ -10,11 +11,23 @@ class PetSocialProfile(models.Model):
         on_delete=models.CASCADE,
         related_name='social_profile',
     )
+    slug = models.SlugField(max_length=180, unique=True, blank=True)
     bio = models.CharField(max_length=500, blank=True)
     cover = models.ImageField(upload_to='community/pet-covers/', blank=True, null=True)
     is_public = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base = slugify(self.pet.name) or f'mascota-{self.pet_id}'
+            candidate = base
+            index = 2
+            while PetSocialProfile.objects.filter(slug=candidate).exclude(pk=self.pk).exists():
+                candidate = f'{base}-{index}'
+                index += 1
+            self.slug = candidate
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f'Perfil social de {self.pet.name}'
@@ -177,19 +190,117 @@ class Reaction(models.Model):
 
 
 class PetFollow(models.Model):
-    follower = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='followed_pets')
-    pet = models.ForeignKey('pets.Pet', on_delete=models.CASCADE, related_name='social_followers')
+    """Seguimiento social unificado.
+
+    Se conserva el nombre histórico del modelo para no perder los seguimientos de
+    mascotas existentes, pero ahora también puede apuntar a veterinarias,
+    negocios y refugios. Exactamente uno de los cuatro destinos debe estar
+    informado.
+    """
+
+    follower = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='followed_pets',
+    )
+    pet = models.ForeignKey(
+        'pets.Pet',
+        on_delete=models.CASCADE,
+        related_name='social_followers',
+        null=True,
+        blank=True,
+    )
+    clinic = models.ForeignKey(
+        'clinics.Clinic',
+        on_delete=models.CASCADE,
+        related_name='social_followers',
+        null=True,
+        blank=True,
+    )
+    business = models.ForeignKey(
+        'partners.BusinessProfile',
+        on_delete=models.CASCADE,
+        related_name='social_followers',
+        null=True,
+        blank=True,
+    )
+    shelter = models.ForeignKey(
+        'partners.ShelterProfile',
+        on_delete=models.CASCADE,
+        related_name='social_followers',
+        null=True,
+        blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=['follower', 'pet'], name='unique_pet_follow')
+            models.CheckConstraint(
+                condition=(
+                    Q(pet__isnull=False, clinic__isnull=True, business__isnull=True, shelter__isnull=True)
+                    | Q(pet__isnull=True, clinic__isnull=False, business__isnull=True, shelter__isnull=True)
+                    | Q(pet__isnull=True, clinic__isnull=True, business__isnull=False, shelter__isnull=True)
+                    | Q(pet__isnull=True, clinic__isnull=True, business__isnull=True, shelter__isnull=False)
+                ),
+                name='community_follow_exactly_one_target',
+            ),
+            models.UniqueConstraint(
+                fields=['follower', 'pet'],
+                condition=Q(pet__isnull=False),
+                name='unique_pet_follow',
+            ),
+            models.UniqueConstraint(
+                fields=['follower', 'clinic'],
+                condition=Q(clinic__isnull=False),
+                name='unique_clinic_follow',
+            ),
+            models.UniqueConstraint(
+                fields=['follower', 'business'],
+                condition=Q(business__isnull=False),
+                name='unique_business_follow',
+            ),
+            models.UniqueConstraint(
+                fields=['follower', 'shelter'],
+                condition=Q(shelter__isnull=False),
+                name='unique_shelter_follow',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['follower', '-created_at'], name='comm_follow_follower_idx'),
+            models.Index(fields=['pet', '-created_at'], name='comm_follow_pet_idx'),
+            models.Index(fields=['clinic', '-created_at'], name='comm_follow_clinic_idx'),
+            models.Index(fields=['business', '-created_at'], name='comm_follow_business_idx'),
+            models.Index(fields=['shelter', '-created_at'], name='comm_follow_shelter_idx'),
         ]
         ordering = ['-created_at']
 
+    @property
+    def target_type(self):
+        if self.pet_id:
+            return 'pet'
+        if self.clinic_id:
+            return 'clinic'
+        if self.business_id:
+            return 'business'
+        if self.shelter_id:
+            return 'shelter'
+        return ''
+
+    @property
+    def target(self):
+        return self.pet or self.clinic or self.business or self.shelter
+
+    @property
+    def target_owner_id(self):
+        target = self.target
+        return getattr(target, 'owner_id', None)
+
     def clean(self):
-        if self.pet_id and self.follower_id == self.pet.owner_id:
-            raise ValidationError('No necesitás seguir a tu propia mascota.')
+        targets = [self.pet_id, self.clinic_id, self.business_id, self.shelter_id]
+        if sum(value is not None for value in targets) != 1:
+            raise ValidationError('El seguimiento debe apuntar a un único perfil de VetPaw.')
+        if self.follower_id and self.target_owner_id == self.follower_id:
+            raise ValidationError('No necesitás seguir tu propio perfil.')
 
 
 class SavedPost(models.Model):
@@ -258,6 +369,27 @@ class CommunityNotification(models.Model):
         null=True,
         blank=True,
     )
+    clinic = models.ForeignKey(
+        'clinics.Clinic',
+        on_delete=models.CASCADE,
+        related_name='community_notifications',
+        null=True,
+        blank=True,
+    )
+    business = models.ForeignKey(
+        'partners.BusinessProfile',
+        on_delete=models.CASCADE,
+        related_name='community_notifications',
+        null=True,
+        blank=True,
+    )
+    shelter = models.ForeignKey(
+        'partners.ShelterProfile',
+        on_delete=models.CASCADE,
+        related_name='community_notifications',
+        null=True,
+        blank=True,
+    )
     notification_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
     extra_text = models.CharField(max_length=300, blank=True)
     is_read = models.BooleanField(default=False)
@@ -279,8 +411,23 @@ class CommunityNotification(models.Model):
             ),
             models.UniqueConstraint(
                 fields=['recipient', 'actor', 'pet', 'notification_type'],
-                condition=Q(notification_type='follow'),
+                condition=Q(notification_type='follow', pet__isnull=False),
                 name='unique_follow_notification',
+            ),
+            models.UniqueConstraint(
+                fields=['recipient', 'actor', 'clinic', 'notification_type'],
+                condition=Q(notification_type='follow', clinic__isnull=False),
+                name='unique_clinic_follow_notification',
+            ),
+            models.UniqueConstraint(
+                fields=['recipient', 'actor', 'business', 'notification_type'],
+                condition=Q(notification_type='follow', business__isnull=False),
+                name='unique_business_follow_notification',
+            ),
+            models.UniqueConstraint(
+                fields=['recipient', 'actor', 'shelter', 'notification_type'],
+                condition=Q(notification_type='follow', shelter__isnull=False),
+                name='unique_shelter_follow_notification',
             ),
         ]
 

@@ -705,3 +705,172 @@ class CommunityApiTests(APITestCase):
         self.assertEqual(shelters.status_code, 200)
         self.assertEqual(shelters.data['pagination']['total'], 1)
         self.assertEqual(shelters.data['results']['shelters'][0]['name'], 'Refugio Moreno')
+
+    def test_stage3_pet_profile_uses_friendly_slug_and_social_stats(self):
+        profile = self.pet.social_profile
+        Post.objects.create(created_by=self.owner, pet=self.pet, text='Primera aventura')
+        post_with_paw = Post.objects.create(created_by=self.owner, pet=self.pet, text='Segunda aventura')
+        Reaction.objects.create(post=post_with_paw, user=self.other)
+
+        response = self.client.get(f'/api/community/pets/{profile.slug}/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['slug'], profile.slug)
+        self.assertEqual(response.data['profile_url'], f'/mascotas/{profile.slug}')
+        self.assertEqual(response.data['posts_count'], 2)
+        self.assertEqual(response.data['paws_count'], 1)
+        self.assertIn('following_count', response.data)
+        self.assertEqual(len(response.data['recent_posts']), 2)
+
+    def test_stage3_follow_professional_profiles_creates_notifications_and_connections(self):
+        clinic_user = User.objects.create_user(
+            username='clinic_social', email='clinic-social@example.com',
+            password=token_urlsafe(24), role='clinic', is_approved=True,
+        )
+        clinic = Clinic.objects.create(
+            owner=clinic_user, name='Veterinaria Social', address='Calle 1',
+            province='Buenos Aires', locality='Moreno',
+        )
+        business_user = User.objects.create_user(
+            username='business_social', email='business-social@example.com',
+            password=token_urlsafe(24), role='business', is_approved=True,
+        )
+        business = BusinessProfile.objects.create(
+            owner=business_user, name='Peluquería Social', business_type='grooming',
+            responsible_name='Ana', province='Buenos Aires', locality='Moreno',
+        )
+        shelter_user = User.objects.create_user(
+            username='shelter_social', email='shelter-social@example.com',
+            password=token_urlsafe(24), role='shelter', is_approved=True,
+        )
+        shelter = ShelterProfile.objects.create(
+            owner=shelter_user, name='Refugio Social', shelter_type='shelter',
+            responsible_name='Marta', province='Buenos Aires', locality='Merlo',
+        )
+
+        self.client.force_authenticate(self.other)
+        targets = [
+            ('clinic', clinic.slug, {'clinic': clinic}, clinic_user),
+            ('business', business.slug, {'business': business}, business_user),
+            ('shelter', shelter.slug, {'shelter': shelter}, shelter_user),
+        ]
+        for profile_type, identifier, lookup, recipient in targets:
+            response = self.client.post(f'/api/community/profiles/{profile_type}/{identifier}/follow/')
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.data['following'])
+            self.assertEqual(response.data['followers_count'], 1)
+            self.assertTrue(PetFollow.objects.filter(follower=self.other, **lookup).exists())
+            self.assertTrue(CommunityNotification.objects.filter(
+                recipient=recipient,
+                actor=self.other,
+                notification_type=CommunityNotification.TYPE_FOLLOW,
+                **lookup,
+            ).exists())
+
+        followers = self.client.get(f'/api/community/profiles/business/{business.slug}/connections/', {'kind': 'followers'})
+        self.assertEqual(followers.status_code, 200)
+        self.assertEqual(followers.data['count'], 1)
+        self.assertEqual(followers.data['results'][0]['owner_user_id'], self.other.id)
+
+        # La segunda pulsación deja de seguir y elimina la notificación asociada.
+        unfollow = self.client.post(f'/api/community/profiles/business/{business.slug}/follow/')
+        self.assertEqual(unfollow.status_code, 200)
+        self.assertFalse(unfollow.data['following'])
+        self.assertFalse(PetFollow.objects.filter(follower=self.other, business=business).exists())
+        self.assertFalse(CommunityNotification.objects.filter(
+            recipient=business_user,
+            actor=self.other,
+            business=business,
+            notification_type=CommunityNotification.TYPE_FOLLOW,
+        ).exists())
+
+    def test_stage3_following_feed_includes_clinics_businesses_and_shelters(self):
+        clinic_user = User.objects.create_user(
+            username='clinic_feed', email='clinic-feed@example.com', password=token_urlsafe(24),
+            role='clinic', is_approved=True,
+        )
+        clinic = Clinic.objects.create(
+            owner=clinic_user, name='Veterinaria Feed', address='Calle 2',
+            province='Buenos Aires', locality='Moreno',
+        )
+        business_user = User.objects.create_user(
+            username='business_feed', email='business-feed@example.com', password=token_urlsafe(24),
+            role='business', is_approved=True,
+        )
+        business = BusinessProfile.objects.create(
+            owner=business_user, name='Petshop Feed', business_type='petshop',
+            responsible_name='Sofía', province='Buenos Aires', locality='Moreno',
+        )
+        shelter_user = User.objects.create_user(
+            username='shelter_feed', email='shelter-feed@example.com', password=token_urlsafe(24),
+            role='shelter', is_approved=True,
+        )
+        shelter = ShelterProfile.objects.create(
+            owner=shelter_user, name='Refugio Feed', shelter_type='rescue',
+            responsible_name='Leo', province='Buenos Aires', locality='Moreno',
+        )
+        clinic_post = Post.objects.create(created_by=clinic_user, clinic=clinic, post_type=Post.TYPE_CLINIC, text='Consejo veterinario')
+        business_post = Post.objects.create(created_by=business_user, business=business, post_type=Post.TYPE_BUSINESS, text='Novedad del negocio')
+        shelter_post = Post.objects.create(created_by=shelter_user, shelter=shelter, post_type=Post.TYPE_SHELTER, text='Historia de rescate')
+        Post.objects.create(created_by=self.owner, pet=self.pet, text='No seguido')
+        PetFollow.objects.create(follower=self.other, clinic=clinic)
+        PetFollow.objects.create(follower=self.other, business=business)
+        PetFollow.objects.create(follower=self.other, shelter=shelter)
+
+        self.client.force_authenticate(self.other)
+        response = self.client.get('/api/community/posts/', {'feed': 'following', 'page_size': 20})
+
+        self.assertEqual(response.status_code, 200)
+        ids = {item['id'] for item in response.data['results']}
+        self.assertEqual(ids, {clinic_post.id, business_post.id, shelter_post.id})
+        self.assertEqual(
+            {item['actor']['type'] for item in response.data['results']},
+            {'clinic', 'business', 'shelter'},
+        )
+
+    def test_stage3_private_pet_slug_is_protected_and_owner_cannot_follow_own_profile(self):
+        profile = self.pet.social_profile
+        profile.is_public = False
+        profile.save(update_fields=['is_public'])
+
+        self.client.force_authenticate(self.other)
+        hidden = self.client.get(f'/api/community/pets/{profile.slug}/')
+        self.assertEqual(hidden.status_code, 404)
+
+        self.client.force_authenticate(self.owner)
+        visible = self.client.get(f'/api/community/pets/{profile.slug}/')
+        self.assertEqual(visible.status_code, 200)
+        own_follow = self.client.post(f'/api/community/profiles/pet/{profile.slug}/follow/')
+        self.assertEqual(own_follow.status_code, 400)
+        self.assertFalse(PetFollow.objects.filter(follower=self.owner, pet=self.pet).exists())
+
+    def test_stage3_clinic_social_profile_edit_permissions_and_stats(self):
+        clinic_user = User.objects.create_user(
+            username='clinic_edit', email='clinic-edit@example.com', password=token_urlsafe(24),
+            role='clinic', is_approved=True,
+        )
+        clinic = Clinic.objects.create(
+            owner=clinic_user, name='Veterinaria Editable', address='Calle 3',
+            province='Buenos Aires', locality='Moreno', services=['dogs', 'lab'],
+        )
+        post = Post.objects.create(created_by=clinic_user, clinic=clinic, post_type=Post.TYPE_CLINIC, text='Publicación clínica')
+        Reaction.objects.create(post=post, user=self.other)
+        PetFollow.objects.create(follower=self.other, clinic=clinic)
+
+        public = self.client.get(f'/api/clinics/perfil/{clinic.slug}/')
+        self.assertEqual(public.status_code, 200)
+        self.assertEqual(public.data['followers_count'], 1)
+        self.assertEqual(public.data['posts_count'], 1)
+        self.assertEqual(public.data['paws_count'], 1)
+        self.assertEqual(public.data['profile_url'], f'/clinicas/{clinic.slug}')
+        self.assertFalse(public.data['can_edit'])
+
+        self.client.force_authenticate(self.other)
+        denied = self.client.patch(f'/api/clinics/perfil/{clinic.slug}/', {'description': 'Cambio ajeno'}, format='multipart')
+        self.assertEqual(denied.status_code, 403)
+
+        self.client.force_authenticate(clinic_user)
+        allowed = self.client.patch(f'/api/clinics/perfil/{clinic.slug}/', {'description': 'Equipo profesional y cercano'}, format='multipart')
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(allowed.data['description'], 'Equipo profesional y cercano')
+        self.assertTrue(allowed.data['can_edit'])

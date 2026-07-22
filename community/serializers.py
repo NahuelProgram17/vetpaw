@@ -168,62 +168,22 @@ class PostSerializer(serializers.ModelSerializer):
         raise serializers.ValidationError('Tipo de cuenta no habilitado para publicar.')
 
     def get_actor(self, obj):
+        from .social_profiles import identity_for_target
         request = self.context.get('request')
         if obj.pet_id:
-            pet = obj.pet
-            profile = getattr(pet, 'social_profile', None)
-            return {
-                'type': 'pet',
-                'id': pet.id,
-                'name': pet.name,
-                'subtitle': ' · '.join(filter(None, [pet.get_species_display(), pet.breed])),
-                'photo': absolute_file_url(request, pet.photo),
-                'cover': absolute_file_url(request, profile.cover if profile else None),
-                'profile_url': f'/mascotas/{pet.id}',
-                'verified': False,
-                'owner_user_id': pet.owner_id,
-            }
+            return identity_for_target('pet', obj.pet, request=request)
         if obj.clinic_id:
-            clinic = obj.clinic
-            return {
-                'type': 'clinic',
-                'id': clinic.id,
-                'name': clinic.name,
-                'subtitle': ' · '.join(filter(None, [clinic.locality, clinic.province])),
-                'photo': absolute_file_url(request, clinic.logo),
-                'profile_url': f'/clinicas/{clinic.slug}',
-                'verified': True,
-                'owner_user_id': clinic.owner_id,
-            }
+            return identity_for_target('clinic', obj.clinic, request=request)
         if obj.business_id:
-            business = obj.business
-            return {
-                'type': 'business',
-                'id': business.id,
-                'name': business.name,
-                'subtitle': ' · '.join(filter(None, [business.get_business_type_display(), business.locality])),
-                'photo': absolute_file_url(request, business.logo),
-                'profile_url': f'/negocios/{business.slug}',
-                'verified': business.is_verified,
-                'owner_user_id': business.owner_id,
-            }
+            return identity_for_target('business', obj.business, request=request)
         if obj.shelter_id:
-            shelter = obj.shelter
-            return {
-                'type': 'shelter',
-                'id': shelter.id,
-                'name': shelter.name,
-                'subtitle': ' · '.join(filter(None, [shelter.get_shelter_type_display(), shelter.locality])),
-                'photo': absolute_file_url(request, shelter.logo),
-                'profile_url': f'/refugios/{shelter.slug}',
-                'verified': shelter.is_verified,
-                'owner_user_id': shelter.owner_id,
-            }
+            return identity_for_target('shelter', obj.shelter, request=request)
         if obj.related_lost_pet_id:
             lost = obj.related_lost_pet
             return {
                 'type': 'lost',
                 'id': lost.id,
+                'identifier': str(lost.id),
                 'name': lost.pet_name or 'Mascota perdida/encontrada',
                 'subtitle': ' · '.join(filter(None, [lost.locality, lost.province])),
                 'photo': absolute_file_url(request, lost.photo),
@@ -274,7 +234,20 @@ class PostSerializer(serializers.ModelSerializer):
 
     def get_following_actor(self, obj):
         user = self._viewer()
-        return bool(user and obj.pet_id and PetFollow.objects.filter(follower=user, pet=obj.pet).exists())
+        if not user:
+            return False
+        filters = {'follower': user}
+        if obj.pet_id:
+            filters['pet'] = obj.pet
+        elif obj.clinic_id:
+            filters['clinic'] = obj.clinic
+        elif obj.business_id:
+            filters['business'] = obj.business
+        elif obj.shelter_id:
+            filters['shelter'] = obj.shelter
+        else:
+            return False
+        return PetFollow.objects.filter(**filters).exists()
 
     def get_can_delete(self, obj):
         user = self._viewer()
@@ -329,25 +302,30 @@ class PetSocialProfileSerializer(serializers.ModelSerializer):
     province = serializers.CharField(source='pet.owner.province', read_only=True)
     owner_display_name = serializers.SerializerMethodField()
     followers_count = serializers.SerializerMethodField()
+    following_count = serializers.SerializerMethodField()
     posts_count = serializers.SerializerMethodField()
+    paws_count = serializers.SerializerMethodField()
     following = serializers.SerializerMethodField()
     is_owner = serializers.SerializerMethodField()
     recent_posts = serializers.SerializerMethodField()
+    gallery = serializers.SerializerMethodField()
+    profile_url = serializers.SerializerMethodField()
 
     class Meta:
         model = PetSocialProfile
         fields = [
-            'id', 'name', 'species', 'species_display', 'breed', 'birth_date',
+            'id', 'slug', 'profile_url', 'name', 'species', 'species_display', 'breed', 'birth_date',
             'temperament', 'temperament_display', 'photo', 'cover', 'cover_url',
             'bio', 'is_public', 'locality', 'province', 'owner_display_name',
-            'followers_count', 'posts_count', 'following', 'is_owner', 'recent_posts',
+            'followers_count', 'following_count', 'posts_count', 'paws_count',
+            'following', 'is_owner', 'recent_posts', 'gallery',
         ]
         extra_kwargs = {'cover': {'write_only': True, 'required': False, 'allow_null': True}}
         read_only_fields = [
-            'id', 'name', 'species', 'species_display', 'breed', 'birth_date',
+            'id', 'slug', 'profile_url', 'name', 'species', 'species_display', 'breed', 'birth_date',
             'temperament', 'temperament_display', 'photo', 'cover_url', 'locality',
-            'province', 'owner_display_name', 'followers_count', 'posts_count',
-            'following', 'is_owner', 'recent_posts',
+            'province', 'owner_display_name', 'followers_count', 'following_count',
+            'posts_count', 'paws_count', 'following', 'is_owner', 'recent_posts', 'gallery',
         ]
 
     def get_photo(self, obj):
@@ -363,8 +341,21 @@ class PetSocialProfileSerializer(serializers.ModelSerializer):
     def get_followers_count(self, obj):
         return obj.pet.social_followers.count()
 
+    def get_following_count(self, obj):
+        return PetFollow.objects.filter(follower=obj.pet.owner).count()
+
     def get_posts_count(self, obj):
         return obj.pet.community_posts.filter(moderation_status=Post.STATUS_PUBLISHED, is_public=True).count()
+
+    def get_paws_count(self, obj):
+        from django.db.models import Count
+        return obj.pet.community_posts.filter(
+            moderation_status=Post.STATUS_PUBLISHED,
+            is_public=True,
+        ).aggregate(total=Count('reactions', distinct=True))['total'] or 0
+
+    def get_profile_url(self, obj):
+        return f'/mascotas/{obj.slug or obj.pet_id}'
 
     def get_following(self, obj):
         request = self.context.get('request')
@@ -376,9 +367,26 @@ class PetSocialProfileSerializer(serializers.ModelSerializer):
 
     def get_recent_posts(self, obj):
         posts = obj.pet.community_posts.filter(moderation_status=Post.STATUS_PUBLISHED, is_public=True).select_related(
-            'pet__owner', 'pet__social_profile', 'clinic', 'business', 'shelter', 'related_lost_pet', 'related_birthday'
-        )[:20]
+            'created_by', 'pet__owner', 'pet__social_profile', 'clinic__owner',
+            'business__owner', 'shelter__owner', 'related_lost_pet', 'related_birthday'
+        ).prefetch_related('comments__author')[:20]
         return PostSerializer(posts, many=True, context=self.context).data
+
+    def get_gallery(self, obj):
+        request = self.context.get('request')
+        posts = obj.pet.community_posts.filter(
+            moderation_status=Post.STATUS_PUBLISHED,
+            is_public=True,
+        ).exclude(image='').exclude(image__isnull=True)[:24]
+        return [
+            {
+                'post_id': post.id,
+                'image_url': absolute_file_url(request, post.image),
+                'text': post.text[:180],
+                'created_at': post.created_at,
+            }
+            for post in posts
+        ]
 
     def validate_cover(self, value):
         return validate_uploaded_image(value, max_mb=5, label='La portada')
@@ -432,6 +440,9 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
     target_type = serializers.SerializerMethodField()
     post_id = serializers.IntegerField(source='post.id', read_only=True)
     pet_id = serializers.IntegerField(source='pet.id', read_only=True)
+    clinic_id = serializers.IntegerField(source='clinic.id', read_only=True)
+    business_id = serializers.IntegerField(source='business.id', read_only=True)
+    shelter_id = serializers.IntegerField(source='shelter.id', read_only=True)
     comment_id = serializers.IntegerField(source='comment.id', read_only=True)
 
     class Meta:
@@ -439,12 +450,12 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'notification_type', 'actor', 'message', 'extra_text',
             'is_read', 'read_at', 'created_at', 'target_url', 'target_type',
-            'post_id', 'pet_id', 'comment_id',
+            'post_id', 'pet_id', 'clinic_id', 'business_id', 'shelter_id', 'comment_id',
         ]
         read_only_fields = [
             'id', 'notification_type', 'actor', 'message', 'extra_text',
             'is_read', 'read_at', 'created_at', 'target_url', 'target_type',
-            'post_id', 'pet_id', 'comment_id',
+            'post_id', 'pet_id', 'clinic_id', 'business_id', 'shelter_id', 'comment_id',
         ]
 
     def _actor_name(self, obj):
@@ -482,13 +493,30 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
         if obj.notification_type == CommunityNotification.TYPE_COMMENT:
             return f'{actor_name} comentó {self._post_subject(obj)}.'
         if obj.notification_type == CommunityNotification.TYPE_FOLLOW:
-            pet_name = obj.pet.name if obj.pet_id else 'tu mascota'
-            return f'{actor_name} comenzó a seguir a {pet_name}.'
+            if obj.pet_id:
+                target_name = obj.pet.name
+            elif obj.clinic_id:
+                target_name = obj.clinic.name
+            elif obj.business_id:
+                target_name = obj.business.name
+            elif obj.shelter_id:
+                target_name = obj.shelter.name
+            else:
+                target_name = 'tu perfil'
+            return f'{actor_name} comenzó a seguir a {target_name}.'
         return 'Tenés nueva actividad en VetPaw.'
 
     def get_target_url(self, obj):
-        if obj.notification_type == CommunityNotification.TYPE_FOLLOW and obj.pet_id:
-            return f'/mascotas/{obj.pet_id}'
+        if obj.notification_type == CommunityNotification.TYPE_FOLLOW:
+            if obj.pet_id:
+                profile = getattr(obj.pet, 'social_profile', None)
+                return f'/mascotas/{profile.slug if profile and profile.slug else obj.pet_id}'
+            if obj.clinic_id:
+                return f'/clinicas/{obj.clinic.slug}'
+            if obj.business_id:
+                return f'/negocios/{obj.business.slug}'
+            if obj.shelter_id:
+                return f'/refugios/{obj.shelter.slug}'
         if (
             obj.notification_type == CommunityNotification.TYPE_COMMENT
             and obj.post_id

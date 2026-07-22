@@ -63,14 +63,31 @@ def notification_message(notification):
     if notification.notification_type == CommunityNotification.TYPE_COMMENT:
         return f'{actor_name} comentó {_post_subject(notification)}.'
     if notification.notification_type == CommunityNotification.TYPE_FOLLOW:
-        pet_name = notification.pet.name if notification.pet_id else 'tu mascota'
-        return f'{actor_name} comenzó a seguir a {pet_name}.'
+        if notification.pet_id:
+            target_name = notification.pet.name
+        elif notification.clinic_id:
+            target_name = notification.clinic.name
+        elif notification.business_id:
+            target_name = notification.business.name
+        elif notification.shelter_id:
+            target_name = notification.shelter.name
+        else:
+            target_name = 'tu perfil'
+        return f'{actor_name} comenzó a seguir a {target_name}.'
     return 'Tenés nueva actividad en VetPaw.'
 
 
 def notification_target_url(notification):
-    if notification.notification_type == CommunityNotification.TYPE_FOLLOW and notification.pet_id:
-        return f'/mascotas/{notification.pet_id}'
+    if notification.notification_type == CommunityNotification.TYPE_FOLLOW:
+        if notification.pet_id:
+            profile = getattr(notification.pet, 'social_profile', None)
+            return f'/mascotas/{profile.slug if profile and profile.slug else notification.pet_id}'
+        if notification.clinic_id:
+            return f'/clinicas/{notification.clinic.slug}'
+        if notification.business_id:
+            return f'/negocios/{notification.business.slug}'
+        if notification.shelter_id:
+            return f'/refugios/{notification.shelter.slug}'
     if (
         notification.notification_type == CommunityNotification.TYPE_COMMENT
         and notification.post_id

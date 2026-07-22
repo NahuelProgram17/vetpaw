@@ -23,6 +23,7 @@ class Clinic(models.Model):
     phone = models.CharField(max_length=20, blank=True)
     email = models.EmailField(blank=True)
     logo = models.ImageField(upload_to='clinics/', blank=True, null=True)
+    cover = models.ImageField(upload_to='clinics/covers/', blank=True, null=True)
     is_active = models.BooleanField(default=True)
     is_24h = models.BooleanField(default=False)
     services = models.JSONField(default=list, blank=True)

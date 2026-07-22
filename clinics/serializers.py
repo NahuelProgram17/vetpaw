@@ -3,6 +3,7 @@ from django.db.models import Avg
 from .models import Clinic, ClinicMembership, ClinicPhoto, ClinicSchedule
 from appointments.models import Review
 from vetpaw.image_validation import validate_uploaded_image
+from users.permissions import is_vetpaw_admin
 
 
 class ReviewSerializer(serializers.ModelSerializer):
@@ -69,22 +70,82 @@ class ClinicScheduleSerializer(serializers.ModelSerializer):
 
 
 class PublicClinicSerializer(serializers.ModelSerializer):
-    rating_avg    = serializers.SerializerMethodField()
+    rating_avg = serializers.SerializerMethodField()
     reviews_count = serializers.SerializerMethodField()
-    reviews       = serializers.SerializerMethodField()
+    reviews = serializers.SerializerMethodField()
     members_count = serializers.SerializerMethodField()
-    photos        = ClinicPhotoSerializer(many=True, read_only=True)
-    has_schedule  = serializers.SerializerMethodField()
+    photos = ClinicPhotoSerializer(many=True, read_only=True)
+    has_schedule = serializers.SerializerMethodField()
+    logo_url = serializers.SerializerMethodField()
+    cover_url = serializers.SerializerMethodField()
+    profile_url = serializers.SerializerMethodField()
+    can_edit = serializers.SerializerMethodField()
+    followers_count = serializers.SerializerMethodField()
+    following_count = serializers.SerializerMethodField()
+    posts_count = serializers.SerializerMethodField()
+    paws_count = serializers.SerializerMethodField()
+    following = serializers.SerializerMethodField()
+    recent_posts = serializers.SerializerMethodField()
+    gallery = serializers.SerializerMethodField()
+    owner_user_id = serializers.IntegerField(source='owner_id', read_only=True)
 
     class Meta:
         model = Clinic
         fields = [
-            'id', 'slug', 'name', 'description', 'address',
-            'province', 'locality', 'phone',
-            'logo', 'is_24h', 'services',
-            'rating_avg', 'reviews_count', 'reviews',
-            'members_count', 'photos', 'has_schedule',
+            'id', 'owner_user_id', 'slug', 'profile_url', 'name', 'description',
+            'address', 'province', 'locality', 'phone', 'email',
+            'logo', 'logo_url', 'cover', 'cover_url', 'is_24h', 'services',
+            'rating_avg', 'reviews_count', 'reviews', 'members_count', 'photos',
+            'has_schedule', 'followers_count', 'following_count', 'posts_count',
+            'paws_count', 'following', 'recent_posts', 'gallery', 'can_edit',
         ]
+        read_only_fields = [
+            'id', 'owner_user_id', 'slug', 'profile_url', 'logo_url', 'cover_url',
+            'rating_avg', 'reviews_count', 'reviews', 'members_count', 'photos',
+            'has_schedule', 'followers_count', 'following_count', 'posts_count',
+            'paws_count', 'following', 'recent_posts', 'gallery', 'can_edit',
+        ]
+        extra_kwargs = {
+            'logo': {'write_only': True, 'required': False, 'allow_null': True},
+            'cover': {'write_only': True, 'required': False, 'allow_null': True},
+        }
+
+    def _request(self):
+        return self.context.get('request')
+
+    def _file_url(self, field):
+        if not field:
+            return None
+        try:
+            url = field.url
+        except (AttributeError, ValueError):
+            return None
+        request = self._request()
+        return request.build_absolute_uri(url) if request and url.startswith('/') else url
+
+    def _stats(self, obj):
+        cache = getattr(self, '_stats_cache', {})
+        if obj.pk not in cache:
+            from community.social_profiles import profile_stats
+            request = self._request()
+            cache[obj.pk] = profile_stats('clinic', obj, request.user if request else None)
+            self._stats_cache = cache
+        return cache[obj.pk]
+
+    def get_logo_url(self, obj):
+        return self._file_url(obj.logo)
+
+    def get_cover_url(self, obj):
+        return self._file_url(obj.cover)
+
+    def get_profile_url(self, obj):
+        return f'/clinicas/{obj.slug}'
+
+    def get_can_edit(self, obj):
+        request = self._request()
+        return bool(request and request.user.is_authenticated and (
+            request.user.id == obj.owner_id or is_vetpaw_admin(request.user)
+        ))
 
     def get_rating_avg(self, obj):
         avg = obj.reviews.aggregate(avg=Avg('rating'))['avg']
@@ -103,6 +164,50 @@ class PublicClinicSerializer(serializers.ModelSerializer):
     def get_has_schedule(self, obj):
         return hasattr(obj, 'schedule')
 
+    def get_followers_count(self, obj):
+        return self._stats(obj)['followers_count']
+
+    def get_following_count(self, obj):
+        return self._stats(obj)['following_count']
+
+    def get_posts_count(self, obj):
+        return self._stats(obj)['posts_count']
+
+    def get_paws_count(self, obj):
+        return self._stats(obj)['paws_count']
+
+    def get_following(self, obj):
+        return self._stats(obj)['following']
+
+    def get_recent_posts(self, obj):
+        from community.serializers import PostSerializer
+        from community.social_profiles import target_posts
+        posts = target_posts('clinic', obj).select_related(
+            'created_by', 'pet__owner', 'pet__social_profile', 'clinic__owner',
+            'business__owner', 'shelter__owner', 'related_lost_pet', 'related_birthday',
+        ).prefetch_related('comments__author')[:20]
+        return PostSerializer(posts, many=True, context=self.context).data
+
+    def get_gallery(self, obj):
+        from community.social_profiles import target_posts
+        request = self._request()
+        rows = target_posts('clinic', obj).exclude(image='').exclude(image__isnull=True)[:24]
+        return [
+            {
+                'post_id': post.id,
+                'image_url': self._file_url(post.image),
+                'text': post.text[:180],
+                'created_at': post.created_at,
+            }
+            for post in rows
+        ]
+
+    def validate_logo(self, value):
+        return validate_uploaded_image(value, max_mb=3, label='El logo de la veterinaria')
+
+    def validate_cover(self, value):
+        return validate_uploaded_image(value, max_mb=6, label='La portada de la veterinaria')
+
 
 class ClinicSerializer(serializers.ModelSerializer):
     members_count = serializers.SerializerMethodField()
@@ -117,7 +222,7 @@ class ClinicSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'owner', 'name', 'slug', 'description', 'address',
             'province', 'locality', 'phone', 'email',
-            'logo', 'is_active', 'is_24h', 'services',
+            'logo', 'cover', 'is_active', 'is_24h', 'services',
             'members_count', 'rating_avg', 'reviews_count',
             'distance_km', 'is_member', 'has_schedule', 'created_at'
         ]
@@ -126,6 +231,9 @@ class ClinicSerializer(serializers.ModelSerializer):
 
     def validate_logo(self, value):
         return validate_uploaded_image(value, max_mb=3, label='El logo de la veterinaria')
+
+    def validate_cover(self, value):
+        return validate_uploaded_image(value, max_mb=6, label='La portada de la veterinaria')
 
     def get_members_count(self, obj):
         return obj.members.filter(status='active').count()

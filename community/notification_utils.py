@@ -90,16 +90,32 @@ def create_comment_notification(post, actor, comment):
     return notification
 
 
-def create_follow_notification(pet, actor):
-    recipient = pet.owner
+def _target_data(target):
+    from clinics.models import Clinic
+    from partners.models import BusinessProfile, ShelterProfile
+    from pets.models import Pet
+
+    if isinstance(target, Pet):
+        return target.owner, {'pet': target}, 'pet'
+    if isinstance(target, Clinic):
+        return target.owner, {'clinic': target}, 'clinic'
+    if isinstance(target, BusinessProfile):
+        return target.owner, {'business': target}, 'business'
+    if isinstance(target, ShelterProfile):
+        return target.owner, {'shelter': target}, 'shelter'
+    raise TypeError('Perfil de seguimiento no compatible.')
+
+
+def create_follow_notification(target, actor):
+    recipient, target_fields, _ = _target_data(target)
     if not _can_notify(recipient, actor):
         return None
 
     notification, created = CommunityNotification.objects.get_or_create(
         recipient=recipient,
         actor=actor,
-        pet=pet,
         notification_type=CommunityNotification.TYPE_FOLLOW,
+        **target_fields,
     )
     if not created:
         notification.is_read = False
@@ -112,10 +128,11 @@ def create_follow_notification(pet, actor):
     return notification
 
 
-def remove_follow_notification(pet, actor):
+def remove_follow_notification(target, actor):
+    recipient, target_fields, _ = _target_data(target)
     CommunityNotification.objects.filter(
-        recipient=pet.owner,
+        recipient=recipient,
         actor=actor,
-        pet=pet,
         notification_type=CommunityNotification.TYPE_FOLLOW,
+        **target_fields,
     ).delete()

@@ -100,7 +100,7 @@ def _pet_payload(request, pet):
             request.user.is_authenticated
             and PetFollow.objects.filter(follower=request.user, pet=pet).exists()
         ),
-        'profile_url': f'/mascotas/{pet.id}',
+        'profile_url': f"/mascotas/{getattr(pet.social_profile, 'slug', '') or pet.id}",
         'owner_user_id': pet.owner_id,
     }
 
@@ -118,6 +118,12 @@ def _clinic_payload(request, clinic):
         'province': clinic.province,
         'is_24h': clinic.is_24h,
         'services': services[:5],
+        'followers_count': getattr(clinic, 'followers_total', clinic.social_followers.count()),
+        'following': bool(
+            request.user.is_authenticated
+            and PetFollow.objects.filter(follower=request.user, clinic=clinic).exists()
+        ),
+        'owner_user_id': clinic.owner_id,
         'posts_count': getattr(clinic, 'posts_total', 0),
         'profile_url': f'/clinicas/{clinic.slug}',
     }
@@ -140,6 +146,12 @@ def _business_payload(request, item):
         'delivery': item.delivery,
         'services': (item.services if isinstance(item.services, list) else [])[:5],
         'is_verified': item.is_verified,
+        'followers_count': getattr(item, 'followers_total', item.social_followers.count()),
+        'following': bool(
+            request.user.is_authenticated
+            and PetFollow.objects.filter(follower=request.user, business=item).exists()
+        ),
+        'owner_user_id': item.owner_id,
         'posts_count': getattr(item, 'posts_total', 0),
         'profile_url': f'/negocios/{item.slug}',
     }
@@ -163,6 +175,12 @@ def _shelter_payload(request, item):
         'needs_foster_homes': item.needs_foster_homes,
         'needs_volunteers': item.needs_volunteers,
         'is_verified': item.is_verified,
+        'followers_count': getattr(item, 'followers_total', item.social_followers.count()),
+        'following': bool(
+            request.user.is_authenticated
+            and PetFollow.objects.filter(follower=request.user, shelter=item).exists()
+        ),
+        'owner_user_id': item.owner_id,
         'posts_count': getattr(item, 'posts_total', 0),
         'profile_url': f'/refugios/{item.slug}',
     }
@@ -337,6 +355,7 @@ def community_explore(request):
 
     clinics = Clinic.objects.filter(is_active=True).select_related('owner').annotate(
         services_search=Cast('services', TextField()),
+        followers_total=Count('social_followers', distinct=True),
         posts_total=Count(
             'community_posts',
             filter=Q(
@@ -379,6 +398,7 @@ def community_explore(request):
 
     businesses = BusinessProfile.objects.filter(is_active=True, owner__is_approved=True).select_related('owner').annotate(
         services_search=Cast('services', TextField()),
+        followers_total=Count('social_followers', distinct=True),
         posts_total=Count(
             'community_posts',
             filter=Q(community_posts__moderation_status=Post.STATUS_PUBLISHED, community_posts__is_public=True),
@@ -411,6 +431,7 @@ def community_explore(request):
 
     shelters = ShelterProfile.objects.filter(is_active=True, owner__is_approved=True).select_related('owner').annotate(
         activities_search=Cast('activities', TextField()),
+        followers_total=Count('social_followers', distinct=True),
         posts_total=Count(
             'community_posts',
             filter=Q(community_posts__moderation_status=Post.STATUS_PUBLISHED, community_posts__is_public=True),

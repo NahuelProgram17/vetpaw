@@ -8,12 +8,20 @@ from .models import BlockedUser, Comment, CommunityNotification, PetFollow, PetS
 class PostAdmin(admin.ModelAdmin):
     list_display = ('id', 'actor_name', 'post_type', 'moderation_status', 'locality', 'created_at')
     list_filter = ('post_type', 'moderation_status', 'is_public', 'province')
-    search_fields = ('text', 'pet__name', 'clinic__name', 'created_by__username')
+    search_fields = ('text', 'pet__name', 'clinic__name', 'business__name', 'shelter__name', 'created_by__username')
     actions = ('publish_posts', 'hide_posts', 'remove_posts')
 
     @admin.display(description='Autor')
     def actor_name(self, obj):
-        return obj.pet.name if obj.pet_id else obj.clinic.name if obj.clinic_id else obj.created_by
+        if obj.pet_id:
+            return obj.pet.name
+        if obj.clinic_id:
+            return obj.clinic.name
+        if obj.business_id:
+            return obj.business.name
+        if obj.shelter_id:
+            return obj.shelter.name
+        return obj.created_by
 
     @admin.action(description='Publicar seleccionadas')
     def publish_posts(self, request, queryset):
@@ -54,7 +62,31 @@ class ReportAdmin(admin.ModelAdmin):
 
 admin.site.register(PetSocialProfile)
 admin.site.register(Reaction)
-admin.site.register(PetFollow)
+
+
+@admin.register(PetFollow)
+class PetFollowAdmin(admin.ModelAdmin):
+    list_display = ('id', 'follower', 'target_name', 'target_type', 'created_at')
+    list_filter = ('created_at',)
+    search_fields = (
+        'follower__username', 'pet__name', 'clinic__name',
+        'business__name', 'shelter__name',
+    )
+    readonly_fields = ('created_at',)
+
+    @admin.display(description='Perfil seguido')
+    def target_name(self, obj):
+        target = obj.target
+        return getattr(target, 'name', 'Perfil eliminado')
+
+    @admin.display(description='Tipo')
+    def target_type(self, obj):
+        return {
+            'pet': 'Mascota', 'clinic': 'Veterinaria',
+            'business': 'Negocio', 'shelter': 'Refugio',
+        }.get(obj.target_type, obj.target_type)
+
+
 admin.site.register(SavedPost)
 admin.site.register(BlockedUser)
 

@@ -27,9 +27,18 @@ class ProfileSerializerMixin:
     completion_percentage = serializers.SerializerMethodField()
     can_edit = serializers.SerializerMethodField()
     public_address = serializers.SerializerMethodField()
+    followers_count = serializers.SerializerMethodField()
+    following_count = serializers.SerializerMethodField()
+    posts_count = serializers.SerializerMethodField()
+    paws_count = serializers.SerializerMethodField()
+    following = serializers.SerializerMethodField()
+    recent_posts = serializers.SerializerMethodField()
+    gallery = serializers.SerializerMethodField()
+    owner_user_id = serializers.IntegerField(source='owner_id', read_only=True)
 
     PRIVATE_FIELDS = set()
     COMPLETION_FIELDS = ()
+    PROFILE_TYPE = ''
 
     def get_logo_url(self, obj):
         return absolute_file_url(self.context.get('request'), obj.logo)
@@ -45,6 +54,57 @@ class ProfileSerializerMixin:
 
     def get_public_address(self, obj):
         return obj.address if obj.show_public_address else ''
+
+    def _social_stats(self, obj):
+        cache = getattr(self, '_social_stats_cache', {})
+        if obj.pk not in cache:
+            from community.social_profiles import profile_stats
+            request = self.context.get('request')
+            cache[obj.pk] = profile_stats(
+                self.PROFILE_TYPE,
+                obj,
+                request.user if request else None,
+            )
+            self._social_stats_cache = cache
+        return cache[obj.pk]
+
+    def get_followers_count(self, obj):
+        return self._social_stats(obj)['followers_count']
+
+    def get_following_count(self, obj):
+        return self._social_stats(obj)['following_count']
+
+    def get_posts_count(self, obj):
+        return self._social_stats(obj)['posts_count']
+
+    def get_paws_count(self, obj):
+        return self._social_stats(obj)['paws_count']
+
+    def get_following(self, obj):
+        return self._social_stats(obj)['following']
+
+    def get_recent_posts(self, obj):
+        from community.serializers import PostSerializer
+        from community.social_profiles import target_posts
+        posts = target_posts(self.PROFILE_TYPE, obj).select_related(
+            'created_by', 'pet__owner', 'pet__social_profile', 'clinic__owner',
+            'business__owner', 'shelter__owner', 'related_lost_pet', 'related_birthday',
+        ).prefetch_related('comments__author')[:20]
+        return PostSerializer(posts, many=True, context=self.context).data
+
+    def get_gallery(self, obj):
+        from community.social_profiles import target_posts
+        request = self.context.get('request')
+        rows = target_posts(self.PROFILE_TYPE, obj).exclude(image='').exclude(image__isnull=True)[:24]
+        return [
+            {
+                'post_id': post.id,
+                'image_url': absolute_file_url(request, post.image),
+                'text': post.text[:180],
+                'created_at': post.created_at,
+            }
+            for post in rows
+        ]
 
     def get_completion_percentage(self, obj):
         completed = 0
@@ -93,6 +153,15 @@ class ProfileSerializerMixin:
 
 
 class BusinessProfileSerializer(ProfileSerializerMixin, serializers.ModelSerializer):
+    PROFILE_TYPE = 'business'
+    followers_count = serializers.SerializerMethodField()
+    following_count = serializers.SerializerMethodField()
+    posts_count = serializers.SerializerMethodField()
+    paws_count = serializers.SerializerMethodField()
+    following = serializers.SerializerMethodField()
+    recent_posts = serializers.SerializerMethodField()
+    gallery = serializers.SerializerMethodField()
+    owner_user_id = serializers.IntegerField(source='owner_id', read_only=True)
     logo_url = serializers.SerializerMethodField()
     cover_url = serializers.SerializerMethodField()
     profile_url = serializers.SerializerMethodField()
@@ -117,11 +186,15 @@ class BusinessProfileSerializer(ProfileSerializerMixin, serializers.ModelSeriali
             'opening_hours', 'home_service', 'delivery', 'online_sales',
             'appointment_required', 'is_24h', 'payment_methods', 'price_range',
             'promotions', 'tax_id', 'legal_name', 'is_verified', 'is_active',
+            'owner_user_id', 'followers_count', 'following_count', 'posts_count',
+            'paws_count', 'following', 'recent_posts', 'gallery',
             'profile_url', 'completion_percentage', 'can_edit', 'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'slug', 'business_type_display', 'logo_url', 'cover_url',
-            'public_address', 'is_verified', 'is_active', 'profile_url',
+            'public_address', 'is_verified', 'is_active', 'owner_user_id',
+            'followers_count', 'following_count', 'posts_count', 'paws_count',
+            'following', 'recent_posts', 'gallery', 'profile_url',
             'completion_percentage', 'can_edit', 'created_at', 'updated_at',
         ]
         extra_kwargs = {
@@ -144,6 +217,15 @@ class BusinessProfileSerializer(ProfileSerializerMixin, serializers.ModelSeriali
 
 
 class ShelterProfileSerializer(ProfileSerializerMixin, serializers.ModelSerializer):
+    PROFILE_TYPE = 'shelter'
+    followers_count = serializers.SerializerMethodField()
+    following_count = serializers.SerializerMethodField()
+    posts_count = serializers.SerializerMethodField()
+    paws_count = serializers.SerializerMethodField()
+    following = serializers.SerializerMethodField()
+    recent_posts = serializers.SerializerMethodField()
+    gallery = serializers.SerializerMethodField()
+    owner_user_id = serializers.IntegerField(source='owner_id', read_only=True)
     logo_url = serializers.SerializerMethodField()
     cover_url = serializers.SerializerMethodField()
     profile_url = serializers.SerializerMethodField()
@@ -179,12 +261,16 @@ class ShelterProfileSerializer(ProfileSerializerMixin, serializers.ModelSerializ
             'accepts_food', 'accepts_medicine', 'needs_transport', 'needs_vet_help',
             'needs_sharing', 'donation_alias', 'donation_cbu', 'donation_needs',
             'legal_status', 'tax_id', 'registration_number', 'is_verified', 'is_active',
+            'owner_user_id', 'followers_count', 'following_count', 'posts_count',
+            'paws_count', 'following', 'recent_posts', 'gallery',
             'profile_url', 'completion_percentage', 'can_edit', 'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'slug', 'shelter_type_display', 'capacity_status_display',
             'logo_url', 'cover_url', 'public_address', 'is_verified', 'is_active',
-            'profile_url', 'completion_percentage', 'can_edit', 'created_at', 'updated_at',
+            'owner_user_id', 'followers_count', 'following_count', 'posts_count',
+            'paws_count', 'following', 'recent_posts', 'gallery', 'profile_url',
+            'completion_percentage', 'can_edit', 'created_at', 'updated_at',
         ]
         extra_kwargs = {
             'logo': {'write_only': True, 'required': False, 'allow_null': True},
