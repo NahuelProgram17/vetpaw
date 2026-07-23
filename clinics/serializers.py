@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.db.models import Avg
-from .models import Clinic, ClinicMembership, ClinicPhoto, ClinicSchedule
+from .models import Clinic, ClinicCampaign, ClinicMembership, ClinicPhoto, ClinicSchedule
 from appointments.models import Review
 from vetpaw.image_validation import validate_uploaded_image
 from users.permissions import is_vetpaw_admin
@@ -69,6 +69,69 @@ class ClinicScheduleSerializer(serializers.ModelSerializer):
         return value
 
 
+class ClinicCampaignSerializer(serializers.ModelSerializer):
+    clinic_name = serializers.CharField(source='clinic.name', read_only=True)
+    clinic_slug = serializers.CharField(source='clinic.slug', read_only=True)
+    image_url = serializers.SerializerMethodField()
+    campaign_type_display = serializers.CharField(source='get_campaign_type_display', read_only=True)
+    appointments_count = serializers.IntegerField(read_only=True)
+    remaining_slots = serializers.IntegerField(read_only=True, allow_null=True)
+    post_id = serializers.SerializerMethodField()
+    can_edit = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ClinicCampaign
+        fields = [
+            'id', 'clinic', 'clinic_name', 'clinic_slug', 'campaign_type',
+            'campaign_type_display', 'title', 'description', 'starts_at', 'ends_at',
+            'location', 'capacity', 'species', 'price', 'is_free', 'image', 'image_url',
+            'allow_booking', 'is_active', 'appointments_count', 'remaining_slots',
+            'post_id', 'can_edit', 'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'clinic', 'clinic_name', 'clinic_slug', 'campaign_type_display',
+            'image_url', 'appointments_count', 'remaining_slots', 'post_id', 'can_edit',
+            'created_at', 'updated_at',
+        ]
+        extra_kwargs = {
+            'image': {'write_only': True, 'required': False, 'allow_null': True},
+        }
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        try:
+            url = obj.image.url
+        except (AttributeError, ValueError):
+            return None
+        request = self.context.get('request')
+        return request.build_absolute_uri(url) if request and url.startswith('/') else url
+
+    def get_post_id(self, obj):
+        post = getattr(obj, 'community_post', None)
+        return post.id if post else None
+
+    def get_can_edit(self, obj):
+        request = self.context.get('request')
+        return bool(
+            request and request.user.is_authenticated
+            and (request.user.id == obj.clinic.owner_id or is_vetpaw_admin(request.user))
+        )
+
+    def validate_image(self, value):
+        return validate_uploaded_image(value, max_mb=6, label='La imagen de la campaña')
+
+    def validate(self, attrs):
+        starts_at = attrs.get('starts_at', getattr(self.instance, 'starts_at', None))
+        ends_at = attrs.get('ends_at', getattr(self.instance, 'ends_at', None))
+        capacity = attrs.get('capacity', getattr(self.instance, 'capacity', None))
+        if ends_at and starts_at and ends_at <= starts_at:
+            raise serializers.ValidationError({'ends_at': 'La finalización debe ser posterior al inicio.'})
+        if capacity == 0:
+            raise serializers.ValidationError({'capacity': 'La capacidad debe ser mayor a cero.'})
+        return attrs
+
+
 class PublicClinicSerializer(serializers.ModelSerializer):
     rating_avg = serializers.SerializerMethodField()
     reviews_count = serializers.SerializerMethodField()
@@ -88,22 +151,24 @@ class PublicClinicSerializer(serializers.ModelSerializer):
     recent_posts = serializers.SerializerMethodField()
     gallery = serializers.SerializerMethodField()
     owner_user_id = serializers.IntegerField(source='owner_id', read_only=True)
+    is_verified = serializers.SerializerMethodField()
+    upcoming_campaigns = serializers.SerializerMethodField()
 
     class Meta:
         model = Clinic
         fields = [
             'id', 'owner_user_id', 'slug', 'profile_url', 'name', 'description',
             'address', 'show_public_address', 'province', 'locality', 'phone', 'email',
-            'logo', 'logo_url', 'cover', 'cover_url', 'is_24h', 'services',
+            'logo', 'logo_url', 'cover', 'cover_url', 'is_24h', 'services', 'is_verified',
             'rating_avg', 'reviews_count', 'reviews', 'members_count', 'photos',
             'has_schedule', 'followers_count', 'following_count', 'posts_count',
-            'paws_count', 'following', 'recent_posts', 'gallery', 'can_edit',
+            'paws_count', 'following', 'recent_posts', 'gallery', 'upcoming_campaigns', 'can_edit',
         ]
         read_only_fields = [
             'id', 'owner_user_id', 'slug', 'profile_url', 'logo_url', 'cover_url',
             'rating_avg', 'reviews_count', 'reviews', 'members_count', 'photos',
             'has_schedule', 'followers_count', 'following_count', 'posts_count',
-            'paws_count', 'following', 'recent_posts', 'gallery', 'can_edit',
+            'paws_count', 'following', 'recent_posts', 'gallery', 'upcoming_campaigns', 'can_edit',
         ]
         extra_kwargs = {
             'logo': {'write_only': True, 'required': False, 'allow_null': True},
@@ -131,6 +196,17 @@ class PublicClinicSerializer(serializers.ModelSerializer):
             cache[obj.pk] = profile_stats('clinic', obj, request.user if request else None)
             self._stats_cache = cache
         return cache[obj.pk]
+
+    def get_is_verified(self, obj):
+        return bool(obj.owner_id and obj.owner.is_approved and obj.is_active)
+
+    def get_upcoming_campaigns(self, obj):
+        from django.utils import timezone
+        rows = obj.community_campaigns.filter(
+            is_active=True,
+            starts_at__gte=timezone.now(),
+        ).order_by('starts_at')[:6]
+        return ClinicCampaignSerializer(rows, many=True, context=self.context).data
 
     def get_logo_url(self, obj):
         return self._file_url(obj.logo)

@@ -52,16 +52,17 @@ class CommentReplySerializer(serializers.ModelSerializer):
     reactions_count = serializers.SerializerMethodField()
     reacted_by_me = serializers.SerializerMethodField()
     can_hide = serializers.SerializerMethodField()
+    is_professional_answer = serializers.SerializerMethodField()
 
     class Meta:
         model = Comment
         fields = [
             'id', 'post', 'author', 'parent', 'text', 'created_at', 'updated_at',
-            'is_edited', 'can_edit', 'can_delete', 'can_hide', 'reactions_count', 'reacted_by_me',
+            'is_edited', 'can_edit', 'can_delete', 'can_hide', 'is_professional_answer', 'reactions_count', 'reacted_by_me',
         ]
         read_only_fields = [
             'id', 'post', 'author', 'parent', 'created_at', 'updated_at', 'is_edited',
-            'can_edit', 'can_delete', 'can_hide', 'reactions_count', 'reacted_by_me',
+            'can_edit', 'can_delete', 'can_hide', 'is_professional_answer', 'reactions_count', 'reacted_by_me',
         ]
 
     def _can_manage(self, obj):
@@ -84,6 +85,14 @@ class CommentReplySerializer(serializers.ModelSerializer):
         return bool(
             request and request.user.is_authenticated
             and (obj.post.created_by_id == request.user.id or is_community_moderator(request.user))
+        )
+
+    def get_is_professional_answer(self, obj):
+        return bool(
+            obj.post_id
+            and obj.post.clinic_id
+            and obj.post.clinic.owner_id == obj.author_id
+            and obj.author.is_approved
         )
 
     def get_is_edited(self, obj):
@@ -151,11 +160,13 @@ class PostSerializer(serializers.ModelSerializer):
     comments_enabled = serializers.SerializerMethodField()
     can_manage_comments = serializers.SerializerMethodField()
     commerce_link = serializers.SerializerMethodField()
+    clinic_content = serializers.SerializerMethodField()
+    clinic_campaign_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
 
     class Meta:
         model = Post
         fields = [
-            'id', 'post_type', 'text', 'image', 'image_url', 'shares_count', 'province', 'locality',
+            'id', 'post_type', 'clinic_content_type', 'clinic_campaign_id', 'clinic_content', 'text', 'image', 'image_url', 'shares_count', 'province', 'locality',
             'comment_permission', 'comments_enabled', 'can_manage_comments',
             'actor', 'reactions_count', 'comments_count', 'comments_preview',
             'reacted_by_me', 'saved_by_me', 'can_edit', 'is_edited', 'following_actor', 'can_delete',
@@ -165,7 +176,7 @@ class PostSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'post_type', 'actor', 'image_url', 'reactions_count', 'comments_count',
             'comments_preview', 'reacted_by_me', 'saved_by_me', 'can_edit', 'is_edited', 'following_actor',
-            'can_delete', 'lost_pet', 'birthday', 'commerce_link', 'comments_enabled', 'can_manage_comments',
+            'can_delete', 'lost_pet', 'birthday', 'commerce_link', 'clinic_content', 'comments_enabled', 'can_manage_comments',
             'shares_count', 'province', 'locality', 'created_at', 'updated_at',
         ]
 
@@ -187,6 +198,7 @@ class PostSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context['request']
+        clinic_campaign_id = validated_data.pop('clinic_campaign_id', None)
         user = request.user
         if not validated_data.get('comment_permission'):
             settings = privacy_for(user)
@@ -194,6 +206,9 @@ class PostSerializer(serializers.ModelSerializer):
                 settings.default_comment_permission if settings else Post.COMMENTS_EVERYONE
             )
         pet_id = request.data.get('pet')
+        if user.role != 'clinic':
+            validated_data.pop('clinic_content_type', None)
+
         if user.role == 'owner':
             if not pet_id:
                 raise serializers.ValidationError({'pet': 'Elegí la mascota que va a publicar.'})
@@ -215,13 +230,28 @@ class PostSerializer(serializers.ModelSerializer):
                 clinic = user.clinic_profile
             except Clinic.DoesNotExist:
                 raise serializers.ValidationError('No tenés una veterinaria asociada.')
+            clinic_content_type = validated_data.get('clinic_content_type') or Post.CLINIC_CONTENT_TIP
+            if clinic_content_type not in dict(Post.CLINIC_CONTENT_CHOICES):
+                raise serializers.ValidationError({'clinic_content_type': 'Elegí un tipo de publicación veterinaria válido.'})
+            campaign = None
+            if clinic_campaign_id:
+                from clinics.models import ClinicCampaign
+                try:
+                    campaign = ClinicCampaign.objects.get(pk=clinic_campaign_id, clinic=clinic)
+                except ClinicCampaign.DoesNotExist:
+                    raise serializers.ValidationError({'clinic_campaign_id': 'La campaña no pertenece a tu veterinaria.'})
+                clinic_content_type = Post.CLINIC_CONTENT_CAMPAIGN
+                if hasattr(campaign, 'community_post'):
+                    raise serializers.ValidationError({'clinic_campaign_id': 'Esta campaña ya está publicada en la comunidad.'})
             return Post.objects.create(
                 created_by=user,
                 clinic=clinic,
+                related_clinic_campaign=campaign,
                 post_type=Post.TYPE_CLINIC,
+                clinic_content_type=clinic_content_type,
                 province=clinic.province,
                 locality=clinic.locality,
-                **validated_data,
+                **{key: value for key, value in validated_data.items() if key != 'clinic_content_type'},
             )
         if user.role == 'business':
             try:
@@ -296,9 +326,37 @@ class PostSerializer(serializers.ModelSerializer):
             return absolute_file_url(request, obj.image)
         if obj.related_lost_pet_id:
             return absolute_file_url(request, obj.related_lost_pet.photo)
+        if obj.related_clinic_campaign_id and obj.related_clinic_campaign.image:
+            return absolute_file_url(request, obj.related_clinic_campaign.image)
         if obj.pet_id and obj.post_type == Post.TYPE_BIRTHDAY:
             return absolute_file_url(request, obj.pet.photo)
         return None
+
+    def get_clinic_content(self, obj):
+        if not obj.clinic_id:
+            return None
+        content_type = obj.clinic_content_type or Post.CLINIC_CONTENT_TIP
+        labels = dict(Post.CLINIC_CONTENT_CHOICES)
+        payload = {
+            'type': content_type,
+            'label': labels.get(content_type, 'Publicación veterinaria'),
+            'verified': bool(obj.clinic.owner_id and obj.clinic.owner.is_approved and obj.clinic.is_active),
+            'clinic_id': obj.clinic_id,
+            'clinic_slug': obj.clinic.slug,
+            'can_request_appointment': bool(
+                obj.clinic.owner_id
+                and obj.clinic.is_active
+                and (not privacy_for(obj.clinic.owner) or privacy_for(obj.clinic.owner).allow_appointment_requests)
+            ),
+            'campaign': None,
+        }
+        if obj.related_clinic_campaign_id:
+            from clinics.serializers import ClinicCampaignSerializer
+            payload['campaign'] = ClinicCampaignSerializer(
+                obj.related_clinic_campaign,
+                context=self.context,
+            ).data
+        return payload
 
     def get_reactions_count(self, obj):
         return getattr(obj, 'reactions_total', None) if hasattr(obj, 'reactions_total') else obj.reactions.count()
@@ -692,18 +750,19 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
     business_id = serializers.IntegerField(source='business.id', read_only=True)
     shelter_id = serializers.IntegerField(source='shelter.id', read_only=True)
     comment_id = serializers.IntegerField(source='comment.id', read_only=True)
+    appointment_id = serializers.IntegerField(source='appointment.id', read_only=True)
 
     class Meta:
         model = CommunityNotification
         fields = [
             'id', 'notification_type', 'actor', 'message', 'extra_text',
             'is_read', 'read_at', 'created_at', 'target_url', 'target_type',
-            'post_id', 'pet_id', 'clinic_id', 'business_id', 'shelter_id', 'comment_id',
+            'post_id', 'pet_id', 'clinic_id', 'business_id', 'shelter_id', 'comment_id', 'appointment_id',
         ]
         read_only_fields = [
             'id', 'notification_type', 'actor', 'message', 'extra_text',
             'is_read', 'read_at', 'created_at', 'target_url', 'target_type',
-            'post_id', 'pet_id', 'clinic_id', 'business_id', 'shelter_id', 'comment_id',
+            'post_id', 'pet_id', 'clinic_id', 'business_id', 'shelter_id', 'comment_id', 'appointment_id',
         ]
 
     def _actor_name(self, obj):
@@ -751,7 +810,14 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
             CommunityNotification.TYPE_BUSINESS_INQUIRY,
             CommunityNotification.TYPE_BUSINESS_RESERVATION,
             CommunityNotification.TYPE_BUSINESS_RESERVATION_UPDATE,
+            CommunityNotification.TYPE_CLINIC_APPOINTMENT,
+            CommunityNotification.TYPE_CLINIC_APPOINTMENT_UPDATE,
         }:
+            if obj.notification_type in {
+                CommunityNotification.TYPE_CLINIC_APPOINTMENT,
+                CommunityNotification.TYPE_CLINIC_APPOINTMENT_UPDATE,
+            }:
+                return 'clinic_appointment'
             return 'business'
         if obj.comment_id:
             return 'comment'

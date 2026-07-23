@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils.text import slugify
 from users.models import User
@@ -167,3 +168,67 @@ class ClinicPetAccess(models.Model):
     def __str__(self):
         status = 'activo' if self.is_active else 'expirado'
         return f"{self.clinic.name} → {self.pet.name} ({status})"
+
+class ClinicCampaign(models.Model):
+    TYPE_VACCINATION = 'vaccination'
+    TYPE_CASTRATION = 'castration'
+    TYPE_CHECKUP = 'checkup'
+    TYPE_EVENT = 'event'
+    TYPE_GUARD = 'guard'
+    TYPE_OTHER = 'other'
+    TYPE_CHOICES = [
+        (TYPE_VACCINATION, 'Campaña de vacunación'),
+        (TYPE_CASTRATION, 'Campaña de castración'),
+        (TYPE_CHECKUP, 'Jornada de controles'),
+        (TYPE_EVENT, 'Evento veterinario'),
+        (TYPE_GUARD, 'Guardia especial'),
+        (TYPE_OTHER, 'Otra actividad'),
+    ]
+
+    clinic = models.ForeignKey(
+        Clinic,
+        on_delete=models.CASCADE,
+        related_name='community_campaigns',
+    )
+    campaign_type = models.CharField(max_length=24, choices=TYPE_CHOICES, default=TYPE_OTHER)
+    title = models.CharField(max_length=180)
+    description = models.TextField(max_length=3000)
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField(null=True, blank=True)
+    location = models.CharField(max_length=255, blank=True)
+    capacity = models.PositiveIntegerField(null=True, blank=True)
+    species = models.JSONField(default=list, blank=True)
+    price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    is_free = models.BooleanField(default=False)
+    image = models.ImageField(upload_to='clinics/campaigns/', blank=True, null=True)
+    allow_booking = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['starts_at']
+        indexes = [
+            models.Index(fields=['clinic', 'is_active', 'starts_at'], name='clinic_campaign_active_idx'),
+            models.Index(fields=['campaign_type', 'starts_at'], name='clinic_campaign_type_idx'),
+        ]
+
+    def clean(self):
+        if self.ends_at and self.ends_at <= self.starts_at:
+            raise ValidationError({'ends_at': 'La fecha de finalización debe ser posterior al inicio.'})
+        if self.capacity == 0:
+            raise ValidationError({'capacity': 'La capacidad debe ser mayor a cero.'})
+
+    @property
+    def appointments_count(self):
+        return self.appointments.exclude(status='cancelled').count()
+
+    @property
+    def remaining_slots(self):
+        if self.capacity is None:
+            return None
+        return max(0, self.capacity - self.appointments_count)
+
+    def __str__(self):
+        return f'{self.clinic.name} — {self.title}'
+

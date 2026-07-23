@@ -41,6 +41,21 @@ class Post(models.Model):
     TYPE_BUSINESS = 'business'
     TYPE_SHELTER = 'shelter'
     TYPE_ADOPTION = 'adoption'
+
+    CLINIC_CONTENT_TIP = 'health_tip'
+    CLINIC_CONTENT_CAMPAIGN = 'campaign'
+    CLINIC_CONTENT_AVAILABILITY = 'availability'
+    CLINIC_CONTENT_GUARD = 'guard'
+    CLINIC_CONTENT_SERVICE = 'service'
+    CLINIC_CONTENT_NOTICE = 'notice'
+    CLINIC_CONTENT_CHOICES = [
+        (CLINIC_CONTENT_TIP, 'Consejo veterinario'),
+        (CLINIC_CONTENT_CAMPAIGN, 'Campaña o evento'),
+        (CLINIC_CONTENT_AVAILABILITY, 'Turnos disponibles'),
+        (CLINIC_CONTENT_GUARD, 'Guardia y horarios'),
+        (CLINIC_CONTENT_SERVICE, 'Servicio veterinario'),
+        (CLINIC_CONTENT_NOTICE, 'Aviso importante'),
+    ]
     TYPE_CHOICES = [
         (TYPE_NORMAL, 'Publicación'),
         (TYPE_BIRTHDAY, 'Cumpleaños'),
@@ -105,6 +120,19 @@ class Post(models.Model):
         blank=True,
     )
     post_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_NORMAL)
+    clinic_content_type = models.CharField(
+        max_length=24,
+        choices=CLINIC_CONTENT_CHOICES,
+        blank=True,
+        default='',
+    )
+    related_clinic_campaign = models.OneToOneField(
+        'clinics.ClinicCampaign',
+        on_delete=models.SET_NULL,
+        related_name='community_post',
+        null=True,
+        blank=True,
+    )
     text = models.TextField(blank=True, max_length=3000)
     image = models.ImageField(upload_to='community/posts/', blank=True, null=True)
     shares_count = models.PositiveIntegerField(default=0)
@@ -515,6 +543,8 @@ class CommunityNotification(models.Model):
     TYPE_BUSINESS_INQUIRY = 'business_inquiry'
     TYPE_BUSINESS_RESERVATION = 'business_reservation'
     TYPE_BUSINESS_RESERVATION_UPDATE = 'business_reservation_update'
+    TYPE_CLINIC_APPOINTMENT = 'clinic_appointment'
+    TYPE_CLINIC_APPOINTMENT_UPDATE = 'clinic_appointment_update'
     TYPE_CHOICES = [
         (TYPE_REACTION, 'Patita en publicación'),
         (TYPE_COMMENT, 'Comentario en publicación'),
@@ -526,6 +556,8 @@ class CommunityNotification(models.Model):
         (TYPE_BUSINESS_INQUIRY, 'Consulta comercial'),
         (TYPE_BUSINESS_RESERVATION, 'Nueva reserva comercial'),
         (TYPE_BUSINESS_RESERVATION_UPDATE, 'Actualización de reserva comercial'),
+        (TYPE_CLINIC_APPOINTMENT, 'Nueva solicitud de turno veterinario'),
+        (TYPE_CLINIC_APPOINTMENT_UPDATE, 'Actualización de turno veterinario'),
     ]
 
     recipient = models.ForeignKey(
@@ -575,6 +607,13 @@ class CommunityNotification(models.Model):
     )
     shelter = models.ForeignKey(
         'partners.ShelterProfile',
+        on_delete=models.CASCADE,
+        related_name='community_notifications',
+        null=True,
+        blank=True,
+    )
+    appointment = models.ForeignKey(
+        'appointments.Appointment',
         on_delete=models.CASCADE,
         related_name='community_notifications',
         null=True,

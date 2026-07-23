@@ -111,6 +111,7 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
             'created_by', 'pet__owner', 'pet__social_profile', 'clinic__owner',
             'business__owner', 'shelter__owner',
             'related_lost_pet__owner', 'related_birthday__pet',
+            'related_clinic_campaign__clinic__owner',
         ).prefetch_related('comments__author').annotate(
             reactions_total=Count('reactions', distinct=True),
             comments_total=Count('comments', filter=Q(comments__moderation_status=Comment.STATUS_PUBLISHED), distinct=True),

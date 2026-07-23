@@ -45,6 +45,20 @@ class Appointment(models.Model):
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='appointments', null=True, blank=True)
     pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name='appointments', null=True, blank=True)
     clinic = models.ForeignKey(Clinic, on_delete=models.CASCADE, related_name='appointments')
+    source_post = models.ForeignKey(
+        'community.Post',
+        on_delete=models.SET_NULL,
+        related_name='generated_appointments',
+        null=True,
+        blank=True,
+    )
+    source_campaign = models.ForeignKey(
+        'clinics.ClinicCampaign',
+        on_delete=models.SET_NULL,
+        related_name='appointments',
+        null=True,
+        blank=True,
+    )
     requested_date = models.DateTimeField()
     reason = models.CharField(max_length=255, blank=True)
     status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='confirmed')

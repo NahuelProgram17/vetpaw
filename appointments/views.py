@@ -71,6 +71,9 @@ class VisitViewSet(viewsets.ModelViewSet):
         if appointment is not None:
             appointment.status = 'completed'
             appointment.save(update_fields=['status', 'updated_at'])
+            if appointment.source_post_id or appointment.source_campaign_id:
+                from .notifications import notify_owner_appointment_update
+                notify_owner_appointment_update(appointment)
 
 
 class AppointmentViewSet(viewsets.ModelViewSet):
@@ -100,7 +103,15 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             clinic_privacy = privacy_for(clinic.owner)
             if clinic_privacy and not clinic_privacy.allow_appointment_requests:
                 raise PermissionDenied('Esta veterinaria no está recibiendo solicitudes de turno desde la comunidad.')
-        appointment = serializer.save(owner=self.request.user)
+        source_post = serializer.validated_data.get('source_post')
+        appointment = serializer.save(
+            owner=self.request.user,
+            status='pending' if source_post else 'confirmed',
+            seen_by_clinic=False if source_post else True,
+        )
+        if source_post:
+            from .notifications import notify_clinic_new_appointment
+            notify_clinic_new_appointment(appointment)
 
         # Desde que un dueño pide un turno, la clínica ya puede ver
         # al paciente en su panel, aunque el turno sea futuro.
@@ -169,6 +180,9 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         appointment.status = 'confirmed'
         appointment.seen_by_owner = False
         appointment.save()
+        if appointment.source_post_id or appointment.source_campaign_id:
+            from .notifications import notify_owner_appointment_update
+            notify_owner_appointment_update(appointment)
         if appointment.pet:
             from clinics.models import ClinicPetAccess
             from django.utils import timezone
@@ -243,6 +257,13 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         appointment.status = 'cancelled'
         appointment.seen_by_owner = False
         appointment.save()
+        if appointment.source_post_id or appointment.source_campaign_id:
+            if request.user.is_clinic:
+                from .notifications import notify_owner_appointment_update
+                notify_owner_appointment_update(appointment)
+            else:
+                from .notifications import notify_clinic_appointment_update
+                notify_clinic_appointment_update(appointment)
         
     # Enviar mail al dueño
         try:
@@ -322,6 +343,9 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         appointment.status = 'no_show'
         appointment.seen_by_owner = False
         appointment.save()
+        if appointment.source_post_id or appointment.source_campaign_id:
+            from .notifications import notify_owner_appointment_update
+            notify_owner_appointment_update(appointment)
         return Response({'message': 'Turno marcado como ausente.'})
     
     

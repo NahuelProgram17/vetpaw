@@ -90,6 +90,10 @@ def notification_message(notification):
         return f'{actor_name} solicitó una reserva. {notification.extra_text}'.strip()
     if notification.notification_type == CommunityNotification.TYPE_BUSINESS_RESERVATION_UPDATE:
         return f'{actor_name} actualizó una reserva. {notification.extra_text}'.strip()
+    if notification.notification_type == CommunityNotification.TYPE_CLINIC_APPOINTMENT:
+        return f'{actor_name} solicitó un turno desde la comunidad. {notification.extra_text}'.strip()
+    if notification.notification_type == CommunityNotification.TYPE_CLINIC_APPOINTMENT_UPDATE:
+        return f'{actor_name} actualizó tu turno. {notification.extra_text}'.strip()
     return 'Tenés nueva actividad en VetPaw.'
 
 
@@ -100,6 +104,12 @@ def notification_target_url(notification):
         return '/business/comercial?tab=reservas'
     if notification.notification_type == CommunityNotification.TYPE_BUSINESS_RESERVATION_UPDATE:
         return '/mis-favoritos?tab=reservas'
+    if notification.notification_type == CommunityNotification.TYPE_CLINIC_APPOINTMENT:
+        return f"/clinic/dashboard?turno={notification.appointment_id or ''}"
+    if notification.notification_type == CommunityNotification.TYPE_CLINIC_APPOINTMENT_UPDATE:
+        if getattr(notification.recipient, 'is_clinic', False):
+            return f"/clinic/dashboard?turno={notification.appointment_id or ''}"
+        return f"/appointments?turno={notification.appointment_id or ''}"
     if notification.notification_type == CommunityNotification.TYPE_FOLLOW_REQUEST:
         return '/configuracion/privacidad?tab=solicitudes'
     if notification.notification_type == CommunityNotification.TYPE_FOLLOW:

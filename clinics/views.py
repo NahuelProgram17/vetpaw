@@ -1,11 +1,13 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.utils import timezone
+from django.db.models import Count, Q, Sum
 from math import radians, sin, cos, sqrt, atan2
 from datetime import datetime, timedelta, date
-from .models import Clinic, ClinicMembership, ClinicPhoto, ClinicSchedule
+from .models import Clinic, ClinicCampaign, ClinicMembership, ClinicPhoto, ClinicSchedule
 from .serializers import (
     ClinicSerializer,
     ClinicMembershipSerializer,
@@ -13,6 +15,7 @@ from .serializers import (
     PublicClinicSerializer,
     ClinicPhotoSerializer,
     ClinicScheduleSerializer,
+    ClinicCampaignSerializer,
 )
 
 
@@ -239,6 +242,119 @@ class ClinicViewSet(viewsets.ModelViewSet):
         membership.left_at = timezone.now()
         membership.save()
         return Response({'message': f'Te diste de baja de {clinic.name}.'})
+
+
+class ClinicCampaignViewSet(viewsets.ModelViewSet):
+    serializer_class = ClinicCampaignSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
+
+    def get_queryset(self):
+        queryset = ClinicCampaign.objects.select_related('clinic__owner').all()
+        user = self.request.user
+        if self.action in ['update', 'partial_update', 'destroy', 'publish']:
+            if not user.is_authenticated:
+                return queryset.none()
+            if getattr(user, 'is_clinic', False):
+                return queryset.filter(clinic__owner=user)
+            if user.is_superuser:
+                return queryset
+            return queryset.none()
+
+        mine = self.request.query_params.get('mine')
+        clinic_id = self.request.query_params.get('clinic')
+        campaign_type = self.request.query_params.get('type')
+        upcoming = self.request.query_params.get('upcoming')
+
+        if mine in {'1', 'true', 'yes'}:
+            if not user.is_authenticated or not getattr(user, 'is_clinic', False):
+                return queryset.none()
+            queryset = queryset.filter(clinic__owner=user)
+        else:
+            queryset = queryset.filter(clinic__is_active=True, is_active=True)
+
+        if clinic_id:
+            queryset = queryset.filter(clinic_id=clinic_id)
+        if campaign_type:
+            queryset = queryset.filter(campaign_type=campaign_type)
+        if upcoming in {'1', 'true', 'yes'}:
+            queryset = queryset.filter(starts_at__gte=timezone.now())
+        return queryset.order_by('starts_at')
+
+    def perform_create(self, serializer):
+        if not self.request.user.is_clinic:
+            raise PermissionDenied('Solo las veterinarias pueden crear campañas.')
+        try:
+            clinic = self.request.user.clinic_profile
+        except Clinic.DoesNotExist as exc:
+            raise PermissionDenied('No tenés una veterinaria asociada.') from exc
+        serializer.save(clinic=clinic)
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def publish(self, request, pk=None):
+        campaign = self.get_object()
+        from community.models import Post
+        from community.serializers import PostSerializer
+
+        text = (request.data.get('text') or '').strip()
+        if not text:
+            text = f'🏥 {campaign.title}\n\n{campaign.description}'
+
+        post, created = Post.objects.update_or_create(
+            related_clinic_campaign=campaign,
+            defaults={
+                'created_by': request.user,
+                'clinic': campaign.clinic,
+                'post_type': Post.TYPE_CLINIC,
+                'clinic_content_type': Post.CLINIC_CONTENT_CAMPAIGN,
+                'text': text,
+                'province': campaign.clinic.province,
+                'locality': campaign.clinic.locality,
+                'is_public': True,
+                'moderation_status': Post.STATUS_PUBLISHED,
+            },
+        )
+        data = PostSerializer(post, context={'request': request}).data
+        return Response(data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def stats(self, request):
+        if not request.user.is_clinic:
+            return Response({'error': 'Solo las veterinarias pueden ver estas estadísticas.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            clinic = request.user.clinic_profile
+        except Clinic.DoesNotExist:
+            return Response({'error': 'No tenés una veterinaria asociada.'}, status=status.HTTP_403_FORBIDDEN)
+
+        from appointments.models import Appointment
+        from community.models import Post
+
+        posts = Post.objects.filter(clinic=clinic, moderation_status=Post.STATUS_PUBLISHED)
+        aggregate = posts.aggregate(
+            reactions=Count('reactions', distinct=True),
+            comments=Count('comments', filter=Q(comments__moderation_status='published'), distinct=True),
+            shares=Sum('shares_count'),
+        )
+        community_appointments = Appointment.objects.filter(
+            clinic=clinic,
+            source_post__isnull=False,
+        )
+        campaigns = ClinicCampaign.objects.filter(clinic=clinic)
+        return Response({
+            'profile_followers': clinic.social_followers.count(),
+            'posts': posts.count(),
+            'reactions': aggregate['reactions'] or 0,
+            'comments': aggregate['comments'] or 0,
+            'shares': aggregate['shares'] or 0,
+            'community_appointments': community_appointments.count(),
+            'community_appointments_pending': community_appointments.filter(status='pending').count(),
+            'campaigns': campaigns.count(),
+            'active_campaigns': campaigns.filter(is_active=True, starts_at__gte=timezone.now()).count(),
+        })
 
 
 class MembershipViewSet(viewsets.ReadOnlyModelViewSet):

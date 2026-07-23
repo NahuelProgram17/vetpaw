@@ -297,6 +297,9 @@ def community_explore(request):
         species = ''
     locality = _clean(request.query_params.get('locality'), 100)
     province = _clean(request.query_params.get('province'), 100)
+    clinic_content_type = _clean(request.query_params.get('clinic_content_type'), 24)
+    if clinic_content_type and clinic_content_type not in dict(Post.CLINIC_CONTENT_CHOICES):
+        clinic_content_type = ''
     page = _positive_int(request.query_params.get('page'), 1, 10000)
     page_size = _positive_int(request.query_params.get('page_size'), 12, 30)
     all_limit = min(page_size, 8)
@@ -501,6 +504,7 @@ def community_explore(request):
     ).select_related(
         'created_by', 'pet__owner', 'pet__social_profile', 'clinic__owner',
         'business__owner', 'shelter__owner', 'related_lost_pet__owner', 'related_birthday__pet',
+        'related_clinic_campaign__clinic__owner',
     ).prefetch_related('comments__author').annotate(
         reactions_total=Count('reactions', distinct=True),
         comments_total=Count(
@@ -539,6 +543,8 @@ def community_explore(request):
         posts = posts.filter(locality__icontains=locality)
     if province:
         posts = posts.filter(province__icontains=province)
+    if clinic_content_type:
+        posts = posts.filter(clinic_content_type=clinic_content_type)
     if sort == 'popular':
         recent_week = timezone.now() - timedelta(days=7)
         recent_month = timezone.now() - timedelta(days=30)
