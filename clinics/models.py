@@ -1,10 +1,27 @@
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils.text import slugify
+from django.utils import timezone
+from datetime import timedelta
 from users.models import User
 
 
 class Clinic(models.Model):
+    PLAN_INACTIVE = 'inactive'
+    PLAN_TRIAL = 'trial'
+    PLAN_ACTIVE = 'active'
+    PLAN_GRACE = 'grace'
+    PLAN_EXPIRED = 'expired'
+    PLAN_SUSPENDED = 'suspended'
+    PLAN_STATUS_CHOICES = [
+        (PLAN_INACTIVE, 'Sin plan'),
+        (PLAN_TRIAL, 'Mes de prueba gratis'),
+        (PLAN_ACTIVE, 'Plan activo'),
+        (PLAN_GRACE, 'Período de gracia'),
+        (PLAN_EXPIRED, 'Plan vencido'),
+        (PLAN_SUSPENDED, 'Plan suspendido'),
+    ]
+
     latitude  = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
     owner = models.OneToOneField(
@@ -29,7 +46,108 @@ class Clinic(models.Model):
     is_active = models.BooleanField(default=True)
     is_24h = models.BooleanField(default=False)
     services = models.JSONField(default=list, blank=True)
+
+    # Suscripción del plan veterinario. Los perfiles y la Comunidad siguen
+    # disponibles aunque el plan no esté activo; agenda, turnos y herramientas
+    # clínicas se habilitan únicamente con prueba, plan o gracia vigentes.
+    plan_status = models.CharField(
+        max_length=16,
+        choices=PLAN_STATUS_CHOICES,
+        default=PLAN_ACTIVE,
+    )
+    plan_started_at = models.DateTimeField(null=True, blank=True)
+    plan_ends_at = models.DateTimeField(null=True, blank=True)
+    grace_ends_at = models.DateTimeField(null=True, blank=True)
+    trial_used = models.BooleanField(default=False)
+    plan_notes = models.CharField(max_length=500, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def effective_plan_status(self):
+        now = timezone.now()
+        if self.plan_status == self.PLAN_TRIAL:
+            return self.PLAN_TRIAL if self.plan_ends_at and self.plan_ends_at >= now else self.PLAN_EXPIRED
+        if self.plan_status == self.PLAN_ACTIVE:
+            return self.PLAN_ACTIVE if not self.plan_ends_at or self.plan_ends_at >= now else self.PLAN_EXPIRED
+        if self.plan_status == self.PLAN_GRACE:
+            return self.PLAN_GRACE if self.grace_ends_at and self.grace_ends_at >= now else self.PLAN_EXPIRED
+        return self.plan_status
+
+    @property
+    def has_active_plan(self):
+        return self.effective_plan_status in {
+            self.PLAN_TRIAL,
+            self.PLAN_ACTIVE,
+            self.PLAN_GRACE,
+        }
+
+    @property
+    def can_use_clinical_tools(self):
+        return bool(
+            self.is_active
+            and self.owner_id
+            and self.owner.is_approved
+            and self.has_active_plan
+        )
+
+    @property
+    def can_receive_appointments(self):
+        return bool(self.can_use_clinical_tools and hasattr(self, 'schedule'))
+
+    def start_free_trial(self, days=30, notes=''):
+        if self.trial_used:
+            raise ValidationError({'trial_used': 'Esta veterinaria ya utilizó su mes de prueba gratis.'})
+        if self.has_active_plan:
+            raise ValidationError({'plan_status': 'La veterinaria ya tiene un plan vigente. La prueba gratis se usa antes del primer abono.'})
+        now = timezone.now()
+        self.plan_status = self.PLAN_TRIAL
+        self.plan_started_at = now
+        self.plan_ends_at = now + timedelta(days=max(1, int(days)))
+        self.grace_ends_at = None
+        self.trial_used = True
+        if notes:
+            self.plan_notes = notes
+        self.save(update_fields=[
+            'plan_status', 'plan_started_at', 'plan_ends_at',
+            'grace_ends_at', 'trial_used', 'plan_notes',
+        ])
+
+    def activate_paid_plan(self, days=30, notes=''):
+        now = timezone.now()
+        base = self.plan_ends_at if self.plan_ends_at and self.plan_ends_at > now else now
+        self.plan_status = self.PLAN_ACTIVE
+        self.plan_started_at = self.plan_started_at or now
+        # Una cuenta que ya pasó al abono pago no puede solicitar después la prueba inicial.
+        self.trial_used = True
+        self.plan_ends_at = base + timedelta(days=max(1, int(days)))
+        self.grace_ends_at = None
+        if notes:
+            self.plan_notes = notes
+        self.save(update_fields=[
+            'plan_status', 'plan_started_at', 'plan_ends_at',
+            'grace_ends_at', 'trial_used', 'plan_notes',
+        ])
+
+    def grant_grace(self, days=5, notes=''):
+        now = timezone.now()
+        self.plan_status = self.PLAN_GRACE
+        self.grace_ends_at = now + timedelta(days=max(1, int(days)))
+        if notes:
+            self.plan_notes = notes
+        self.save(update_fields=['plan_status', 'grace_ends_at', 'plan_notes'])
+
+    def suspend_plan(self, notes=''):
+        self.plan_status = self.PLAN_SUSPENDED
+        if notes:
+            self.plan_notes = notes
+        self.save(update_fields=['plan_status', 'plan_notes'])
+
+    def expire_plan(self, notes=''):
+        self.plan_status = self.PLAN_EXPIRED
+        if notes:
+            self.plan_notes = notes
+        self.save(update_fields=['plan_status', 'plan_notes'])
 
     def __str__(self):
         return f"{self.name} — {self.locality}"
@@ -174,14 +292,12 @@ class ClinicCampaign(models.Model):
     TYPE_CASTRATION = 'castration'
     TYPE_CHECKUP = 'checkup'
     TYPE_EVENT = 'event'
-    TYPE_GUARD = 'guard'
     TYPE_OTHER = 'other'
     TYPE_CHOICES = [
         (TYPE_VACCINATION, 'Campaña de vacunación'),
         (TYPE_CASTRATION, 'Campaña de castración'),
         (TYPE_CHECKUP, 'Jornada de controles'),
         (TYPE_EVENT, 'Evento veterinario'),
-        (TYPE_GUARD, 'Guardia especial'),
         (TYPE_OTHER, 'Otra actividad'),
     ]
 
@@ -201,7 +317,7 @@ class ClinicCampaign(models.Model):
     price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     is_free = models.BooleanField(default=False)
     image = models.ImageField(upload_to='clinics/campaigns/', blank=True, null=True)
-    allow_booking = models.BooleanField(default=True)
+    allow_booking = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -228,6 +344,12 @@ class ClinicCampaign(models.Model):
         if self.capacity is None:
             return None
         return max(0, self.capacity - self.appointments_count)
+
+    def save(self, *args, **kwargs):
+        # Las campañas de Comunidad son informativas. La agenda veterinaria
+        # se gestiona únicamente desde el módulo pago de turnos de VetPaw.
+        self.allow_booking = False
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f'{self.clinic.name} — {self.title}'

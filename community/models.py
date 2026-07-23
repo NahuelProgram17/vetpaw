@@ -51,10 +51,8 @@ class Post(models.Model):
     CLINIC_CONTENT_CHOICES = [
         (CLINIC_CONTENT_TIP, 'Consejo veterinario'),
         (CLINIC_CONTENT_CAMPAIGN, 'Campaña o evento'),
-        (CLINIC_CONTENT_AVAILABILITY, 'Turnos disponibles'),
-        (CLINIC_CONTENT_GUARD, 'Guardia y horarios'),
-        (CLINIC_CONTENT_SERVICE, 'Servicio veterinario'),
         (CLINIC_CONTENT_NOTICE, 'Aviso importante'),
+        (CLINIC_CONTENT_SERVICE, 'Servicio veterinario'),
     ]
     TYPE_CHOICES = [
         (TYPE_NORMAL, 'Publicación'),

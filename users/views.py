@@ -50,7 +50,11 @@ class RegisterClinicView(generics.CreateAPIView):
             # Clínica queda pendiente de aprobación (is_approved=False por defecto)
             user.save()
             clinic_data = getattr(user, '_clinic_data', {})
-            Clinic.objects.create(owner=user, **clinic_data)
+            Clinic.objects.create(
+                owner=user,
+                plan_status=Clinic.PLAN_INACTIVE,
+                **clinic_data,
+            )
 
 
 class RegisterBusinessView(generics.CreateAPIView):

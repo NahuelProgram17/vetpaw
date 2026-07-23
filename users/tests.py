@@ -94,3 +94,81 @@ class AdministrativePermissionTests(APITestCase):
         legacy.refresh_from_db()
         self.assertTrue(legacy.groups.filter(name='vetpaw_admins').exists())
         self.assertTrue(legacy.groups.filter(name='community_moderators').exists())
+
+
+class ClinicPlanAdministrationTests(APITestCase):
+    def setUp(self):
+        from clinics.models import Clinic
+
+        self.admin = User.objects.create_user(
+            username='plan-admin',
+            email='plan-admin@vetpaw.test',
+            password=token_urlsafe(24),
+            role='owner',
+            is_approved=True,
+            is_staff=True,
+        )
+        self.clinic_user = User.objects.create_user(
+            username='plan-managed-clinic',
+            email='plan-managed-clinic@vetpaw.test',
+            password=token_urlsafe(24),
+            role='clinic',
+            is_approved=True,
+        )
+        self.clinic = Clinic.objects.create(
+            owner=self.clinic_user,
+            name='Veterinaria Administrada',
+            address='Calle Admin 123',
+            province='Buenos Aires',
+            locality='Moreno',
+            plan_status=Clinic.PLAN_INACTIVE,
+        )
+        self.client.force_authenticate(self.admin)
+
+    def test_admin_can_approve_clinic_with_first_free_month_atomically(self):
+        from clinics.models import Clinic
+
+        self.clinic_user.is_approved = False
+        self.clinic_user.save(update_fields=['is_approved'])
+        response = self.client.post(
+            f'/api/users/admin/clinic-plan/{self.clinic.id}/',
+            {'action': 'approve_and_start_trial'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.clinic_user.refresh_from_db()
+        self.clinic.refresh_from_db()
+        self.assertTrue(self.clinic_user.is_approved)
+        self.assertEqual(self.clinic.plan_status, Clinic.PLAN_TRIAL)
+        self.assertTrue(self.clinic.trial_used)
+
+    def test_admin_can_start_first_free_month(self):
+        from clinics.models import Clinic
+
+        response = self.client.post(
+            f'/api/users/admin/clinic-plan/{self.clinic.id}/',
+            {'action': 'start_trial'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.clinic.refresh_from_db()
+        self.assertEqual(self.clinic.plan_status, Clinic.PLAN_TRIAL)
+        self.assertTrue(self.clinic.trial_used)
+        self.assertTrue(self.clinic.has_active_plan)
+        self.assertIsNotNone(self.clinic.plan_ends_at)
+
+    def test_admin_cannot_grant_trial_twice(self):
+        self.clinic.start_free_trial()
+        response = self.client.post(
+            f'/api/users/admin/clinic-plan/{self.clinic.id}/',
+            {'action': 'start_trial'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+
+    def test_admin_panel_lists_clinic_plan(self):
+        response = self.client.get('/api/users/admin-panel/')
+        self.assertEqual(response.status_code, 200, response.data)
+        row = next(item for item in response.data['clinic_plans'] if item['clinic_id'] == self.clinic.id)
+        self.assertEqual(row['plan_status'], 'inactive')
+        self.assertFalse(row['trial_used'])

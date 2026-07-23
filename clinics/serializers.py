@@ -91,7 +91,7 @@ class ClinicCampaignSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'clinic', 'clinic_name', 'clinic_slug', 'campaign_type_display',
             'image_url', 'appointments_count', 'remaining_slots', 'post_id', 'can_edit',
-            'created_at', 'updated_at',
+            'allow_booking', 'created_at', 'updated_at',
         ]
         extra_kwargs = {
             'image': {'write_only': True, 'required': False, 'allow_null': True},
@@ -153,6 +153,8 @@ class PublicClinicSerializer(serializers.ModelSerializer):
     owner_user_id = serializers.IntegerField(source='owner_id', read_only=True)
     is_verified = serializers.SerializerMethodField()
     upcoming_campaigns = serializers.SerializerMethodField()
+    can_request_appointment = serializers.SerializerMethodField()
+    appointment_unavailable_reason = serializers.SerializerMethodField()
 
     class Meta:
         model = Clinic
@@ -162,13 +164,15 @@ class PublicClinicSerializer(serializers.ModelSerializer):
             'logo', 'logo_url', 'cover', 'cover_url', 'is_24h', 'services', 'is_verified',
             'rating_avg', 'reviews_count', 'reviews', 'members_count', 'photos',
             'has_schedule', 'followers_count', 'following_count', 'posts_count',
-            'paws_count', 'following', 'recent_posts', 'gallery', 'upcoming_campaigns', 'can_edit',
+            'paws_count', 'following', 'recent_posts', 'gallery', 'upcoming_campaigns',
+            'can_request_appointment', 'appointment_unavailable_reason', 'can_edit',
         ]
         read_only_fields = [
             'id', 'owner_user_id', 'slug', 'profile_url', 'logo_url', 'cover_url',
             'rating_avg', 'reviews_count', 'reviews', 'members_count', 'photos',
             'has_schedule', 'followers_count', 'following_count', 'posts_count',
-            'paws_count', 'following', 'recent_posts', 'gallery', 'upcoming_campaigns', 'can_edit',
+            'paws_count', 'following', 'recent_posts', 'gallery', 'upcoming_campaigns',
+            'can_request_appointment', 'appointment_unavailable_reason', 'can_edit',
         ]
         extra_kwargs = {
             'logo': {'write_only': True, 'required': False, 'allow_null': True},
@@ -207,6 +211,27 @@ class PublicClinicSerializer(serializers.ModelSerializer):
             starts_at__gte=timezone.now(),
         ).order_by('starts_at')[:6]
         return ClinicCampaignSerializer(rows, many=True, context=self.context).data
+
+    def get_can_request_appointment(self, obj):
+        from community.privacy import privacy_for
+        settings = privacy_for(obj.owner) if obj.owner_id else None
+        return bool(
+            obj.can_receive_appointments
+            and (not settings or settings.allow_appointment_requests)
+        )
+
+    def get_appointment_unavailable_reason(self, obj):
+        if self.get_can_request_appointment(obj):
+            return ''
+        if not obj.can_use_clinical_tools:
+            return 'Esta veterinaria no tiene activo el servicio mensual de turnos en VetPaw.'
+        if not hasattr(obj, 'schedule'):
+            return 'Esta veterinaria todavía no configuró su agenda en VetPaw.'
+        from community.privacy import privacy_for
+        settings = privacy_for(obj.owner) if obj.owner_id else None
+        if settings and not settings.allow_appointment_requests:
+            return 'Esta veterinaria pausó temporalmente las solicitudes de turno.'
+        return 'Esta veterinaria no está recibiendo turnos en este momento.'
 
     def get_logo_url(self, obj):
         return self._file_url(obj.logo)
@@ -296,7 +321,7 @@ class PublicClinicSerializer(serializers.ModelSerializer):
                 data['recent_posts'] = []
                 data['gallery'] = []
         data['allow_internal_messages'] = settings.allow_internal_messages if settings else True
-        data['allow_appointment_requests'] = settings.allow_appointment_requests if settings else True
+        data['allow_appointment_requests'] = self.get_can_request_appointment(instance)
         return data
 
     def validate_logo(self, value):
@@ -313,6 +338,10 @@ class ClinicSerializer(serializers.ModelSerializer):
     distance_km   = serializers.SerializerMethodField()
     is_member     = serializers.SerializerMethodField()
     has_schedule  = serializers.SerializerMethodField()
+    can_request_appointment = serializers.SerializerMethodField()
+    appointment_unavailable_reason = serializers.SerializerMethodField()
+    effective_plan_status = serializers.CharField(read_only=True)
+    plan_active = serializers.BooleanField(source='has_active_plan', read_only=True)
 
     class Meta:
         model = Clinic
@@ -321,10 +350,16 @@ class ClinicSerializer(serializers.ModelSerializer):
             'province', 'locality', 'phone', 'email',
             'logo', 'cover', 'show_public_address', 'is_active', 'is_24h', 'services',
             'members_count', 'rating_avg', 'reviews_count',
-            'distance_km', 'is_member', 'has_schedule', 'created_at'
+            'distance_km', 'is_member', 'has_schedule',
+            'can_request_appointment', 'appointment_unavailable_reason',
+            'plan_status', 'effective_plan_status', 'plan_active', 'trial_used',
+            'plan_started_at', 'plan_ends_at', 'grace_ends_at', 'created_at'
         ]
         read_only_fields = ['id', 'slug', 'created_at', 'members_count', 'rating_avg',
-                            'reviews_count', 'distance_km', 'is_member', 'has_schedule']
+                            'reviews_count', 'distance_km', 'is_member', 'has_schedule',
+                            'can_request_appointment', 'appointment_unavailable_reason',
+                            'plan_status', 'effective_plan_status', 'plan_active', 'trial_used',
+                            'plan_started_at', 'plan_ends_at', 'grace_ends_at']
 
     def validate_logo(self, value):
         return validate_uploaded_image(value, max_mb=3, label='El logo de la veterinaria')
@@ -356,6 +391,23 @@ class ClinicSerializer(serializers.ModelSerializer):
 
     def get_has_schedule(self, obj):
         return hasattr(obj, 'schedule')
+
+    def get_can_request_appointment(self, obj):
+        try:
+            from community.privacy import privacy_for
+            settings = privacy_for(obj.owner) if obj.owner_id else None
+        except Exception:
+            settings = None
+        return bool(obj.can_receive_appointments and (not settings or settings.allow_appointment_requests))
+
+    def get_appointment_unavailable_reason(self, obj):
+        if self.get_can_request_appointment(obj):
+            return ''
+        if not obj.can_use_clinical_tools:
+            return 'Plan mensual de turnos no activo.'
+        if not hasattr(obj, 'schedule'):
+            return 'Agenda todavía no configurada.'
+        return 'Solicitudes de turno pausadas.'
 
 
 class ClinicMembershipSerializer(serializers.ModelSerializer):

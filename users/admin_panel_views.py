@@ -4,7 +4,9 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
 from datetime import timedelta
+from django.db import transaction
 from django.db.models import Count
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 from .permissions import is_vetpaw_admin
 
@@ -18,6 +20,32 @@ def format_local_datetime(value):
     if not value:
         return '—'
     return timezone.localtime(value).strftime('%d/%m/%Y %H:%M')
+
+
+def serialize_clinic_plan(clinic):
+    return {
+        'clinic_id': clinic.id,
+        'user_id': clinic.owner_id,
+        'name': clinic.name,
+        'username': clinic.owner.username if clinic.owner_id else '',
+        'email': clinic.owner.email if clinic.owner_id else '',
+        'is_approved': bool(clinic.owner_id and clinic.owner.is_approved),
+        'is_active': clinic.is_active,
+        'plan_status': clinic.plan_status,
+        'effective_plan_status': clinic.effective_plan_status,
+        'plan_status_display': clinic.get_plan_status_display(),
+        'plan_active': clinic.has_active_plan,
+        'can_use_clinical_tools': clinic.can_use_clinical_tools,
+        'can_receive_appointments': clinic.can_receive_appointments,
+        'trial_used': clinic.trial_used,
+        'plan_started_at': clinic.plan_started_at.isoformat() if clinic.plan_started_at else None,
+        'plan_ends_at': clinic.plan_ends_at.isoformat() if clinic.plan_ends_at else None,
+        'grace_ends_at': clinic.grace_ends_at.isoformat() if clinic.grace_ends_at else None,
+        'plan_notes': clinic.plan_notes,
+        'has_schedule': hasattr(clinic, 'schedule'),
+        'locality': clinic.locality,
+        'province': clinic.province,
+    }
 
 
 @api_view(['GET'])
@@ -144,6 +172,7 @@ def admin_panel(request):
         clinic = Clinic.objects.filter(owner=u).first()
         pending_clinics_data.append({
             'user_id':       u.id,
+            'clinic_id':     clinic.id if clinic else None,
             'username':      u.username,
             'email':         u.email,
             'date_joined':   format_local_datetime(u.date_joined),
@@ -176,6 +205,11 @@ def admin_panel(request):
             'locality': profile.locality if profile else '',
         })
 
+    clinic_plans = [
+        serialize_clinic_plan(clinic)
+        for clinic in Clinic.objects.select_related('owner').order_by('name')
+    ]
+
     return Response({
         'global': {
             'total_owners':      total_owners,
@@ -199,4 +233,63 @@ def admin_panel(request):
         'security':          security_data,
         'pending_clinics':   pending_clinics_data,
         'pending_profiles':  pending_profiles,
+        'clinic_plans':      clinic_plans,
     })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def clinic_plan_action(request, clinic_id):
+    if not is_admin(request.user):
+        return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
+
+    from clinics.models import Clinic
+
+    try:
+        clinic = Clinic.objects.select_related('owner').get(pk=clinic_id)
+    except Clinic.DoesNotExist:
+        return Response({'error': 'Veterinaria no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+
+    action = str(request.data.get('action') or '').strip().lower()
+    notes = str(request.data.get('notes') or '').strip()[:500]
+    try:
+        days = int(request.data.get('days') or 30)
+    except (TypeError, ValueError):
+        return Response({'error': 'La cantidad de días no es válida.'}, status=status.HTTP_400_BAD_REQUEST)
+    days = max(1, min(days, 365))
+
+    try:
+        if action == 'approve_and_start_trial':
+            if not clinic.owner_id:
+                return Response({'error': 'La veterinaria no tiene un usuario responsable asociado.'}, status=status.HTTP_400_BAD_REQUEST)
+            with transaction.atomic():
+                clinic.owner.is_approved = True
+                clinic.owner.save(update_fields=['is_approved'])
+                clinic.start_free_trial(days=30, notes=notes or 'Primer mes gratis de prueba')
+            message = 'Veterinaria aprobada con su primer mes gratis por 30 días.'
+        elif action == 'start_trial':
+            clinic.start_free_trial(days=30, notes=notes or 'Primer mes gratis de prueba')
+            message = 'Mes de prueba gratis activado por 30 días.'
+        elif action == 'activate':
+            clinic.activate_paid_plan(days=days, notes=notes or f'Plan activado por {days} días')
+            message = f'Plan veterinario activado por {days} días.'
+        elif action == 'grace':
+            clinic.grant_grace(days=days, notes=notes or f'Período de gracia por {days} días')
+            message = f'Período de gracia activado por {days} días.'
+        elif action == 'suspend':
+            clinic.suspend_plan(notes=notes or 'Plan suspendido desde el panel de VetPaw')
+            message = 'Plan veterinario suspendido.'
+        elif action == 'expire':
+            clinic.expire_plan(notes=notes or 'Plan marcado como vencido desde el panel de VetPaw')
+            message = 'Plan veterinario marcado como vencido.'
+        else:
+            return Response({'error': 'Acción de plan no válida.'}, status=status.HTTP_400_BAD_REQUEST)
+    except DjangoValidationError as exc:
+        if hasattr(exc, 'message_dict'):
+            payload = exc.message_dict
+        else:
+            payload = {'error': exc.messages[0] if exc.messages else str(exc)}
+        return Response(payload, status=status.HTTP_400_BAD_REQUEST)
+
+    clinic.refresh_from_db()
+    return Response({'message': message, 'clinic': serialize_clinic_plan(clinic)})

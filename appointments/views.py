@@ -8,6 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
+from clinics.models import Clinic
 from pets.models import Pet
 
 from .models import Appointment, Review, Visit
@@ -35,6 +36,8 @@ class VisitViewSet(viewsets.ModelViewSet):
             clinic = self.request.user.clinic_profile
         except Exception as exc:
             raise PermissionDenied('No tenés una clínica asociada.') from exc
+        if not clinic.can_use_clinical_tools:
+            raise PermissionDenied('Tu plan veterinario no está activo. La carga de visitas forma parte del abono mensual de VetPaw.')
 
         pet = serializer.validated_data['pet']
         cutoff = timezone.now() - timedelta(days=270)
@@ -80,6 +83,15 @@ class AppointmentViewSet(viewsets.ModelViewSet):
     serializer_class = AppointmentSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    def _clinic_for_paid_tools(self, user):
+        try:
+            clinic = user.clinic_profile
+        except Exception as exc:
+            raise PermissionDenied('No tenés una clínica asociada.') from exc
+        if not clinic.can_use_clinical_tools:
+            raise PermissionDenied('Tu plan veterinario no está activo. La agenda y las herramientas clínicas requieren el abono mensual de VetPaw.')
+        return clinic
+
     def get_queryset(self):
         user = self.request.user
         if user.is_owner:
@@ -92,46 +104,94 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 return Appointment.objects.none()
         return Appointment.objects.none()
 
+    @staticmethod
+    def _ensure_appointment_request_allowed(owner, clinic):
+        """Valida permisos sociales antes de las reglas comerciales del turno.
+
+        La privacidad y los bloqueos son autorizaciones: deben responder 403 aun
+        cuando la clínica todavía no haya configurado su agenda. Las validaciones
+        de plan y agenda se mantienen después, como reglas propias del turno.
+        """
+        from community.privacy import privacy_for, users_blocked_between
+
+        if users_blocked_between(owner, clinic.owner):
+            raise PermissionDenied('No podés solicitar turnos a este perfil.')
+
+        clinic_privacy = privacy_for(clinic.owner)
+        if clinic_privacy and not clinic_privacy.allow_appointment_requests:
+            raise PermissionDenied(
+                'Esta veterinaria pausó temporalmente las solicitudes de turno en VetPaw.'
+            )
+
+    def create(self, request, *args, **kwargs):
+        # Las referencias a Comunidad se validan primero en el serializer para
+        # mantener el mensaje específico que impide reservar desde publicaciones.
+        is_community_request = bool(
+            request.data.get('source_post') or request.data.get('source_campaign')
+        )
+        if request.user.is_owner and not is_community_request:
+            clinic_id = request.data.get('clinic')
+            try:
+                clinic = Clinic.objects.select_related('owner').get(pk=clinic_id)
+            except (Clinic.DoesNotExist, TypeError, ValueError):
+                # El serializer devolverá el error de campo correspondiente.
+                pass
+            else:
+                self._ensure_appointment_request_allowed(request.user, clinic)
+
+        return super().create(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         if not self.request.user.is_owner:
             raise PermissionDenied('Solo los dueños pueden pedir turnos.')
         clinic = serializer.validated_data.get('clinic')
-        if clinic:
-            from community.privacy import privacy_for, users_blocked_between
-            if users_blocked_between(self.request.user, clinic.owner):
-                raise PermissionDenied('No podés solicitar turnos a este perfil.')
-            clinic_privacy = privacy_for(clinic.owner)
-            if clinic_privacy and not clinic_privacy.allow_appointment_requests:
-                raise PermissionDenied('Esta veterinaria no está recibiendo solicitudes de turno desde la comunidad.')
-        source_post = serializer.validated_data.get('source_post')
+        if not clinic:
+            raise ValidationError({'clinic': 'Elegí una veterinaria.'})
+
+        # Se repite al guardar para que la autorización siga protegida incluso
+        # si este método se reutiliza desde otro flujo interno.
+        self._ensure_appointment_request_allowed(self.request.user, clinic)
+        if not clinic.can_use_clinical_tools:
+            raise PermissionDenied('Esta veterinaria no tiene activo el plan mensual de VetPaw para recibir turnos.')
+        if not hasattr(clinic, 'schedule'):
+            raise ValidationError({'clinic': 'Esta veterinaria todavía no configuró su agenda en VetPaw.'})
+
         appointment = serializer.save(
             owner=self.request.user,
-            status='pending' if source_post else 'confirmed',
-            seen_by_clinic=False if source_post else True,
+            status='confirmed',
+            seen_by_clinic=True,
+            source_post=None,
+            source_campaign=None,
         )
-        if source_post:
-            from .notifications import notify_clinic_new_appointment
-            notify_clinic_new_appointment(appointment)
 
         # Desde que un dueño pide un turno, la clínica ya puede ver
         # al paciente en su panel, aunque el turno sea futuro.
         if appointment.pet and appointment.clinic:
             from clinics.models import ClinicPetAccess
-            from django.utils import timezone
             ClinicPetAccess.objects.update_or_create(
                 clinic=appointment.clinic,
                 pet=appointment.pet,
                 defaults={'last_appointment': appointment.requested_date or timezone.now()}
             )
 
+    def perform_update(self, serializer):
+        user = self.request.user
+        clinic = serializer.validated_data.get('clinic', serializer.instance.clinic)
+        if user.is_clinic:
+            self._clinic_for_paid_tools(user)
+        elif user.is_owner:
+            if not clinic.can_use_clinical_tools:
+                raise PermissionDenied('Esta veterinaria no tiene activo el plan mensual de VetPaw para gestionar turnos.')
+        serializer.save(source_post=None, source_campaign=None)
+
     @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='program_control')
     def program_control(self, request):
         if not request.user.is_clinic:
             return Response({'error': 'Solo las clínicas pueden programar controles.'}, status=status.HTTP_403_FORBIDDEN)
         try:
-            clinic = request.user.clinic_profile
-        except Exception:
-            return Response({'error': 'No tenés una clínica asociada.'}, status=status.HTTP_403_FORBIDDEN)
+            clinic = self._clinic_for_paid_tools(request.user)
+        except PermissionDenied as exc:
+            return Response({'error': str(exc.detail)}, status=status.HTTP_403_FORBIDDEN)
 
         pet_id = request.data.get('pet')
         requested_date = request.data.get('requested_date')
@@ -177,6 +237,10 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 {'error': 'Solo las clínicas pueden confirmar turnos.'},
                 status=status.HTTP_403_FORBIDDEN
             )
+        try:
+            self._clinic_for_paid_tools(request.user)
+        except PermissionDenied as exc:
+            return Response({'error': str(exc.detail)}, status=status.HTTP_403_FORBIDDEN)
         appointment.status = 'confirmed'
         appointment.seen_by_owner = False
         appointment.save()
@@ -254,6 +318,11 @@ class AppointmentViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['patch'], permission_classes=[permissions.IsAuthenticated])
     def cancel(self, request, pk=None):
         appointment = self.get_object()
+        if request.user.is_clinic:
+            try:
+                self._clinic_for_paid_tools(request.user)
+            except PermissionDenied as exc:
+                return Response({'error': str(exc.detail)}, status=status.HTTP_403_FORBIDDEN)
         appointment.status = 'cancelled'
         appointment.seen_by_owner = False
         appointment.save()
@@ -340,6 +409,10 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 {'error': 'Solo las clínicas pueden marcar ausencias.'},
                 status=status.HTTP_403_FORBIDDEN
             )
+        try:
+            self._clinic_for_paid_tools(request.user)
+        except PermissionDenied as exc:
+            return Response({'error': str(exc.detail)}, status=status.HTTP_403_FORBIDDEN)
         appointment.status = 'no_show'
         appointment.seen_by_owner = False
         appointment.save()
@@ -354,11 +427,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         if not request.user.is_clinic:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('Solo las clínicas pueden descargar la agenda.')
-        try:
-            clinic = request.user.clinic_profile
-        except Exception:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied('No tenés una clínica asociada.')
+        clinic = self._clinic_for_paid_tools(request.user)
     
         date_str = request.query_params.get('date')
         if date_str:

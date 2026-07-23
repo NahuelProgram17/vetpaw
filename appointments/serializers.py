@@ -44,48 +44,37 @@ class AppointmentSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'owner', 'status', 'seen_by_owner',
             'reminder_sent', 'created_at', 'updated_at',
-            'appointment_type_display', 'source_campaign',
+            'appointment_type_display', 'source_post', 'source_campaign',
         ]
 
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        source_post = attrs.get('source_post', getattr(self.instance, 'source_post', None))
+        request = self.context.get('request')
         clinic = attrs.get('clinic', getattr(self.instance, 'clinic', None))
         pet = attrs.get('pet', getattr(self.instance, 'pet', None))
-        request = self.context.get('request')
 
-        if source_post:
-            if not source_post.clinic_id or source_post.clinic_id != getattr(clinic, 'id', None):
-                raise serializers.ValidationError({'source_post': 'La publicación no pertenece a la veterinaria seleccionada.'})
-            if source_post.moderation_status != 'published' or not source_post.is_public:
-                raise serializers.ValidationError({'source_post': 'Esta publicación ya no está disponible.'})
-            campaign = source_post.related_clinic_campaign
-            if campaign:
-                if not campaign.is_active or not campaign.allow_booking:
-                    raise serializers.ValidationError({'source_post': 'Esta campaña no está recibiendo reservas.'})
-                if campaign.remaining_slots == 0:
-                    raise serializers.ValidationError({'source_post': 'La campaña ya no tiene cupos disponibles.'})
-                if request and request.user.is_authenticated and self.instance is None:
-                    exists = Appointment.objects.filter(
-                        owner=request.user,
-                        source_campaign=campaign,
-                        status__in=['pending', 'confirmed'],
-                    ).exists()
-                    if exists:
-                        raise serializers.ValidationError({'source_post': 'Ya tenés una solicitud activa para esta campaña.'})
-                attrs['requested_date'] = campaign.starts_at
-                attrs['source_campaign'] = campaign
-                if not attrs.get('reason'):
-                    attrs['reason'] = campaign.title
-                if campaign.campaign_type == 'vaccination':
-                    attrs['appointment_type'] = 'vaccine'
-                else:
-                    attrs['appointment_type'] = attrs.get('appointment_type') or 'other'
+        if request and self.instance is None and (
+            request.data.get('source_post') or request.data.get('source_campaign')
+        ):
+            raise serializers.ValidationError({
+                'detail': 'Los turnos no se reservan desde la Comunidad. Ingresá a la sección Turnos de VetPaw.'
+            })
 
         if request and request.user.is_authenticated and pet and pet.owner_id != request.user.id and request.user.role == 'owner':
             raise serializers.ValidationError({'pet': 'La mascota seleccionada no te pertenece.'})
+
+        if request and self.instance is None and request.user.is_authenticated and request.user.role == 'owner' and clinic:
+            if not clinic.can_use_clinical_tools:
+                raise serializers.ValidationError({
+                    'clinic': 'Esta veterinaria no tiene activo el plan mensual de VetPaw para recibir turnos.'
+                })
+            if not hasattr(clinic, 'schedule'):
+                raise serializers.ValidationError({
+                    'clinic': 'Esta veterinaria todavía no configuró su agenda en VetPaw.'
+                })
         return attrs
+
 
 
 class ReviewSerializer(serializers.ModelSerializer):

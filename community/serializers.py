@@ -343,11 +343,9 @@ class PostSerializer(serializers.ModelSerializer):
             'verified': bool(obj.clinic.owner_id and obj.clinic.owner.is_approved and obj.clinic.is_active),
             'clinic_id': obj.clinic_id,
             'clinic_slug': obj.clinic.slug,
-            'can_request_appointment': bool(
-                obj.clinic.owner_id
-                and obj.clinic.is_active
-                and (not privacy_for(obj.clinic.owner) or privacy_for(obj.clinic.owner).allow_appointment_requests)
-            ),
+            # La Comunidad es informativa. Los turnos se solicitan únicamente
+            # desde la sección veterinaria de VetPaw y requieren un plan vigente.
+            'can_request_appointment': False,
             'campaign': None,
         }
         if obj.related_clinic_campaign_id:

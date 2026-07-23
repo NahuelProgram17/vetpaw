@@ -101,6 +101,12 @@ class ClinicViewSet(viewsets.ModelViewSet):
         """
         clinic = self.get_object()
 
+        if not clinic.can_use_clinical_tools:
+            return Response(
+                {'error': 'Esta veterinaria no tiene activo el plan mensual de VetPaw para recibir turnos.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         # Validar que la clínica tiene agenda configurada
         try:
             schedule = clinic.schedule
@@ -292,7 +298,10 @@ class ClinicCampaignViewSet(viewsets.ModelViewSet):
             clinic = self.request.user.clinic_profile
         except Clinic.DoesNotExist as exc:
             raise PermissionDenied('No tenés una veterinaria asociada.') from exc
-        serializer.save(clinic=clinic)
+        serializer.save(clinic=clinic, allow_booking=False)
+
+    def perform_update(self, serializer):
+        serializer.save(allow_booking=False)
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def publish(self, request, pk=None):
@@ -330,7 +339,6 @@ class ClinicCampaignViewSet(viewsets.ModelViewSet):
         except Clinic.DoesNotExist:
             return Response({'error': 'No tenés una veterinaria asociada.'}, status=status.HTTP_403_FORBIDDEN)
 
-        from appointments.models import Appointment
         from community.models import Post
 
         posts = Post.objects.filter(clinic=clinic, moderation_status=Post.STATUS_PUBLISHED)
@@ -339,10 +347,6 @@ class ClinicCampaignViewSet(viewsets.ModelViewSet):
             comments=Count('comments', filter=Q(comments__moderation_status='published'), distinct=True),
             shares=Sum('shares_count'),
         )
-        community_appointments = Appointment.objects.filter(
-            clinic=clinic,
-            source_post__isnull=False,
-        )
         campaigns = ClinicCampaign.objects.filter(clinic=clinic)
         return Response({
             'profile_followers': clinic.social_followers.count(),
@@ -350,8 +354,6 @@ class ClinicCampaignViewSet(viewsets.ModelViewSet):
             'reactions': aggregate['reactions'] or 0,
             'comments': aggregate['comments'] or 0,
             'shares': aggregate['shares'] or 0,
-            'community_appointments': community_appointments.count(),
-            'community_appointments_pending': community_appointments.filter(status='pending').count(),
             'campaigns': campaigns.count(),
             'active_campaigns': campaigns.filter(is_active=True, starts_at__gte=timezone.now()).count(),
         })
@@ -424,11 +426,22 @@ class ClinicScheduleViewSet(viewsets.ViewSet):
         except Exception:
             return None
 
+    def _plan_error(self, clinic):
+        if clinic and not clinic.can_use_clinical_tools:
+            return Response(
+                {'error': 'Tu plan veterinario no está activo. Podés seguir usando la Comunidad, pero la agenda y los turnos requieren el abono mensual.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return None
+
     @action(detail=False, methods=['get'], url_path='me')
     def get_schedule(self, request):
         clinic = self._get_clinic(request.user)
         if not clinic:
             return Response({'error': 'No tenés una clínica asociada.'}, status=status.HTTP_403_FORBIDDEN)
+        plan_error = self._plan_error(clinic)
+        if plan_error:
+            return plan_error
         try:
             schedule = clinic.schedule
             return Response(ClinicScheduleSerializer(schedule).data)
@@ -440,6 +453,9 @@ class ClinicScheduleViewSet(viewsets.ViewSet):
         clinic = self._get_clinic(request.user)
         if not clinic:
             return Response({'error': 'No tenés una clínica asociada.'}, status=status.HTTP_403_FORBIDDEN)
+        plan_error = self._plan_error(clinic)
+        if plan_error:
+            return plan_error
         try:
             schedule = clinic.schedule
             serializer = ClinicScheduleSerializer(schedule, data=request.data, partial=True)
@@ -460,6 +476,9 @@ class ClinicScheduleViewSet(viewsets.ViewSet):
         clinic = self._get_clinic(request.user)
         if not clinic:
             return Response({'error': 'No tenés una clínica asociada.'}, status=status.HTTP_403_FORBIDDEN)
+        plan_error = self._plan_error(clinic)
+        if plan_error:
+            return plan_error
 
         requested_date = request.data.get('requested_date')
         appointment_type = request.data.get('appointment_type', 'control')

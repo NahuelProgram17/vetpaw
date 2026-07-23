@@ -5,25 +5,25 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from appointments.models import Appointment
-from community.models import CommunityNotification, Post
+from community.models import Post
 from pets.models import Pet
 from users.models import User
 
-from .models import Clinic, ClinicCampaign
+from .models import Clinic, ClinicCampaign, ClinicSchedule
 
 
-class ClinicCommunityStage8Tests(APITestCase):
+class ClinicCommunityStage81Tests(APITestCase):
     def setUp(self):
         self.clinic_user = User.objects.create_user(
-            username='stage8-clinic',
-            email='stage8-clinic@vetpaw.test',
+            username='stage81-clinic',
+            email='stage81-clinic@vetpaw.test',
             password=token_urlsafe(24),
             role='clinic',
             is_approved=True,
         )
         self.owner = User.objects.create_user(
-            username='stage8-owner',
-            email='stage8-owner@vetpaw.test',
+            username='stage81-owner',
+            email='stage81-owner@vetpaw.test',
             password=token_urlsafe(24),
             role='owner',
             is_approved=True,
@@ -37,10 +37,16 @@ class ClinicCommunityStage8Tests(APITestCase):
             latitude=-34.6500,
             longitude=-58.7900,
             is_active=True,
+            plan_status=Clinic.PLAN_ACTIVE,
+        )
+        ClinicSchedule.objects.create(
+            clinic=self.clinic,
+            working_days=[0, 1, 2, 3, 4, 5, 6],
+            day_hours={str(day): {'open': '08:00', 'close': '20:00'} for day in range(7)},
         )
         self.pet = Pet.objects.create(
             owner=self.owner,
-            name='Toby Stage 8',
+            name='Toby Stage 8.1',
             species='dog',
             sex='male',
         )
@@ -50,7 +56,7 @@ class ClinicCommunityStage8Tests(APITestCase):
         return {
             'campaign_type': ClinicCampaign.TYPE_VACCINATION,
             'title': 'Vacunación antirrábica',
-            'description': 'Jornada comunitaria con cupos limitados.',
+            'description': 'Jornada comunitaria informativa.',
             'starts_at': self.starts_at.isoformat(),
             'ends_at': (self.starts_at + timedelta(hours=4)).isoformat(),
             'location': 'Veterinaria Comunidad',
@@ -58,127 +64,135 @@ class ClinicCommunityStage8Tests(APITestCase):
             'species': ['dog', 'cat'],
             'price': '0.00',
             'is_free': True,
+            # Aunque un cliente viejo lo envíe, el backend lo ignora.
             'allow_booking': True,
             'is_active': True,
         }
 
-    def test_clinic_can_create_and_publish_campaign(self):
+    def test_clinic_can_create_and_publish_informative_campaign(self):
         self.client.force_authenticate(self.clinic_user)
-
         create_response = self.client.post(
             '/api/clinic-campaigns/',
             self._campaign_payload(),
             format='json',
         )
-
         self.assertEqual(create_response.status_code, 201, create_response.data)
         campaign = ClinicCampaign.objects.get(pk=create_response.data['id'])
-        self.assertEqual(campaign.clinic, self.clinic)
+        self.assertFalse(campaign.allow_booking)
 
         publish_response = self.client.post(
             f'/api/clinic-campaigns/{campaign.id}/publish/',
             {'text': 'Sumate a nuestra campaña de vacunación.'},
             format='json',
         )
-
         self.assertEqual(publish_response.status_code, 201, publish_response.data)
         post = Post.objects.get(related_clinic_campaign=campaign)
-        self.assertEqual(post.clinic, self.clinic)
         self.assertEqual(post.clinic_content_type, Post.CLINIC_CONTENT_CAMPAIGN)
-        self.assertTrue(post.is_public)
+        self.assertFalse(publish_response.data['clinic_content']['can_request_appointment'])
 
     def test_owner_cannot_create_clinic_campaign(self):
         self.client.force_authenticate(self.owner)
-
-        response = self.client.post(
-            '/api/clinic-campaigns/',
-            self._campaign_payload(),
-            format='json',
-        )
-
+        response = self.client.post('/api/clinic-campaigns/', self._campaign_payload(), format='json')
         self.assertEqual(response.status_code, 403)
         self.assertFalse(ClinicCampaign.objects.exists())
 
-    def test_campaign_appointment_creates_notifications_for_both_sides(self):
-        campaign = ClinicCampaign.objects.create(
-            clinic=self.clinic,
-            campaign_type=ClinicCampaign.TYPE_VACCINATION,
-            title='Vacunación con turno',
-            description='Reservá desde la Comunidad.',
-            starts_at=self.starts_at,
-            ends_at=self.starts_at + timedelta(hours=4),
-            capacity=5,
-            species=['dog'],
-            is_free=True,
-            allow_booking=True,
-            is_active=True,
-        )
+    def test_community_post_cannot_generate_appointment(self):
         post = Post.objects.create(
             created_by=self.clinic_user,
             clinic=self.clinic,
             post_type=Post.TYPE_CLINIC,
-            clinic_content_type=Post.CLINIC_CONTENT_CAMPAIGN,
-            related_clinic_campaign=campaign,
-            text='Turnos para vacunación.',
+            clinic_content_type=Post.CLINIC_CONTENT_NOTICE,
+            text='Aviso importante de la veterinaria.',
             province=self.clinic.province,
             locality=self.clinic.locality,
-            is_public=True,
-            moderation_status=Post.STATUS_PUBLISHED,
         )
         self.client.force_authenticate(self.owner)
-
         response = self.client.post('/api/appointments/', {
             'pet': self.pet.id,
             'clinic': self.clinic.id,
             'source_post': post.id,
             'requested_date': (timezone.now() + timedelta(days=2)).isoformat(),
-            'reason': 'Quiero participar',
+            'reason': 'Intento desde Comunidad',
             'appointment_type': 'control',
         }, format='json')
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('Turnos', str(response.data))
+        self.assertFalse(Appointment.objects.exists())
 
-        self.assertEqual(response.status_code, 201, response.data)
-        appointment = Appointment.objects.get(pk=response.data['id'])
-        self.assertEqual(appointment.status, 'pending')
-        self.assertEqual(appointment.source_campaign, campaign)
-        self.assertEqual(appointment.requested_date, campaign.starts_at)
-        self.assertEqual(appointment.appointment_type, 'vaccine')
-        self.assertTrue(CommunityNotification.objects.filter(
-            recipient=self.clinic_user,
-            actor=self.owner,
-            appointment=appointment,
-            notification_type=CommunityNotification.TYPE_CLINIC_APPOINTMENT,
-        ).exists())
-
-        self.client.force_authenticate(self.clinic_user)
-        confirm_response = self.client.patch(
-            f'/api/appointments/{appointment.id}/confirm/',
-            {},
-            format='json',
+    def test_only_four_professional_post_categories_remain(self):
+        self.assertEqual(
+            {value for value, _ in Post.CLINIC_CONTENT_CHOICES},
+            {'health_tip', 'campaign', 'notice', 'service'},
         )
 
-        self.assertEqual(confirm_response.status_code, 200, confirm_response.data)
-        appointment.refresh_from_db()
-        self.assertEqual(appointment.status, 'confirmed')
-        self.assertTrue(CommunityNotification.objects.filter(
-            recipient=self.owner,
-            actor=self.clinic_user,
-            appointment=appointment,
-            notification_type=CommunityNotification.TYPE_CLINIC_APPOINTMENT_UPDATE,
-        ).exists())
 
+class ClinicPlanAccessTests(APITestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            username='plan-owner',
+            email='plan-owner@vetpaw.test',
+            password=token_urlsafe(24),
+            role='owner',
+            is_approved=True,
+        )
+        self.clinic_user = User.objects.create_user(
+            username='plan-clinic',
+            email='plan-clinic@vetpaw.test',
+            password=token_urlsafe(24),
+            role='clinic',
+            is_approved=True,
+        )
+        self.clinic = Clinic.objects.create(
+            owner=self.clinic_user,
+            name='Veterinaria Plan',
+            address='Calle Plan 10',
+            province='Buenos Aires',
+            locality='Moreno',
+            plan_status=Clinic.PLAN_INACTIVE,
+        )
+        ClinicSchedule.objects.create(
+            clinic=self.clinic,
+            working_days=[0, 1, 2, 3, 4, 5, 6],
+            day_hours={str(day): {'open': '08:00', 'close': '20:00'} for day in range(7)},
+        )
+        self.pet = Pet.objects.create(owner=self.owner, name='Milo Plan', species='dog', sex='male')
+
+    def _appointment_payload(self):
+        return {
+            'pet': self.pet.id,
+            'clinic': self.clinic.id,
+            'requested_date': (timezone.now() + timedelta(days=2)).replace(hour=10, minute=0).isoformat(),
+            'reason': 'Control',
+            'appointment_type': 'control',
+        }
+
+    def test_inactive_plan_blocks_new_appointments_and_slots(self):
         self.client.force_authenticate(self.owner)
-        cancel_response = self.client.patch(
-            f'/api/appointments/{appointment.id}/cancel/',
-            {},
-            format='json',
-        )
+        response = self.client.post('/api/appointments/', self._appointment_payload(), format='json')
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(Appointment.objects.exists())
 
-        self.assertEqual(cancel_response.status_code, 200, cancel_response.data)
-        appointment.refresh_from_db()
-        self.assertEqual(appointment.status, 'cancelled')
-        self.assertTrue(CommunityNotification.objects.filter(
-            recipient=self.clinic_user,
-            actor=self.owner,
-            appointment=appointment,
-            notification_type=CommunityNotification.TYPE_CLINIC_APPOINTMENT_UPDATE,
-        ).exists())
+        date_value = (timezone.localdate() + timedelta(days=2)).isoformat()
+        slots = self.client.get(f'/api/clinics/{self.clinic.id}/slots/?date={date_value}&type=control')
+        self.assertEqual(slots.status_code, 403)
+
+    def test_free_trial_enables_paid_appointment_tools(self):
+        self.clinic.start_free_trial()
+        self.client.force_authenticate(self.owner)
+        response = self.client.post('/api/appointments/', self._appointment_payload(), format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        appointment = Appointment.objects.get()
+        self.assertIsNone(appointment.source_post_id)
+        self.assertIsNone(appointment.source_campaign_id)
+        self.assertEqual(appointment.status, 'confirmed')
+
+    def test_free_trial_can_only_be_used_once(self):
+        self.clinic.start_free_trial()
+        with self.assertRaises(Exception):
+            self.clinic.start_free_trial()
+
+    def test_paid_plan_prevents_late_trial(self):
+        self.clinic.activate_paid_plan(days=30)
+        self.assertTrue(self.clinic.trial_used)
+        with self.assertRaises(Exception):
+            self.clinic.start_free_trial()
