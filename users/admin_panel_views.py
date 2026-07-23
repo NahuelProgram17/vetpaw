@@ -3,7 +3,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
-from datetime import timedelta
+from django.utils.dateparse import parse_date, parse_datetime
+from datetime import datetime, time, timedelta
 from django.db import transaction
 from django.db.models import Count, Q
 from django.db.models.functions import TruncDate
@@ -627,3 +628,316 @@ def clinic_plan_action(request, clinic_id):
 
     clinic.refresh_from_db()
     return Response({'message': message, 'clinic': serialize_clinic_plan(clinic)})
+
+
+def _professional_profile_name(user):
+    if user.role == 'clinic':
+        profile = getattr(user, 'clinic_profile', None)
+    elif user.role == 'business':
+        profile = getattr(user, 'business_profile', None)
+    elif user.role == 'shelter':
+        profile = getattr(user, 'shelter_profile', None)
+    else:
+        profile = None
+    return getattr(profile, 'name', '') if profile else ''
+
+
+def serialize_moderation_account(user, active_sanction=None):
+    from .sanctions import serialize_account_sanction
+
+    sanctions_count = getattr(user, 'sanctions_count', None)
+    if sanctions_count is None:
+        sanctions_count = user.account_sanctions.count()
+
+    return {
+        'id': user.id,
+        'username': user.username,
+        'email': user.email,
+        'first_name': user.first_name,
+        'last_name': user.last_name,
+        'role': user.role,
+        'role_display': user.get_role_display(),
+        'profile_name': _professional_profile_name(user),
+        'is_approved': user.is_approved,
+        'date_joined': user.date_joined.isoformat(),
+        'sanctions_count': sanctions_count,
+        'account_status': (
+            'banned'
+            if active_sanction and active_sanction.kind == active_sanction.KIND_PERMANENT_BAN
+            else 'suspended'
+            if active_sanction
+            else 'active'
+        ),
+        'active_sanction': serialize_account_sanction(active_sanction),
+    }
+
+
+def _pagination_values(request):
+    try:
+        page = max(1, int(request.query_params.get('page', 1)))
+        page_size = min(50, max(1, int(request.query_params.get('page_size', 20))))
+    except (TypeError, ValueError):
+        page, page_size = 1, 20
+    return page, page_size
+
+
+def _paginate_queryset(queryset, page, page_size):
+    total = queryset.count()
+    start = (page - 1) * page_size
+    end = start + page_size
+    return total, start, end
+
+
+def _parse_custom_suspension_end(raw_value):
+    value = str(raw_value or '').strip()
+    if not value:
+        return None
+    parsed = parse_datetime(value)
+    if parsed is None:
+        parsed_date = parse_date(value)
+        if parsed_date:
+            parsed = datetime.combine(parsed_date, time(23, 59, 59))
+    if parsed is None:
+        raise ValueError('La fecha personalizada no es válida.')
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
+
+
+def _report_target_user_id(report):
+    if report.reported_user_id:
+        return report.reported_user_id
+    if report.post_id:
+        return report.post.created_by_id
+    if report.comment_id:
+        return report.comment.author_id
+    return None
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def account_moderation_accounts(request):
+    if not is_admin(request.user):
+        return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
+
+    from django.db.models import Count
+    from users.models import User
+    from .sanctions import active_sanctions_queryset
+
+    now = timezone.now()
+    active_qs = active_sanctions_queryset(now).select_related('user', 'applied_by', 'revoked_by')
+    active_rows = list(active_qs)
+    active_by_user = {}
+    for row in active_rows:
+        active_by_user.setdefault(row.user_id, row)
+    active_user_ids = list(active_by_user)
+
+    queryset = User.objects.select_related(
+        'clinic_profile', 'business_profile', 'shelter_profile'
+    ).annotate(sanctions_count=Count('account_sanctions', distinct=True)).order_by('-date_joined')
+
+    search = str(request.query_params.get('search') or '').strip()
+    if search:
+        queryset = queryset.filter(
+            Q(username__icontains=search)
+            | Q(email__icontains=search)
+            | Q(first_name__icontains=search)
+            | Q(last_name__icontains=search)
+        )
+    role = str(request.query_params.get('role') or '').strip()
+    if role in dict(User.ROLE_CHOICES):
+        queryset = queryset.filter(role=role)
+    account_status = str(request.query_params.get('status') or 'all').strip().lower()
+    if account_status == 'active':
+        queryset = queryset.exclude(id__in=active_user_ids)
+    elif account_status == 'suspended':
+        ids = [row.user_id for row in active_rows if row.kind == row.KIND_SUSPENSION]
+        queryset = queryset.filter(id__in=ids)
+    elif account_status == 'banned':
+        ids = [row.user_id for row in active_rows if row.kind == row.KIND_PERMANENT_BAN]
+        queryset = queryset.filter(id__in=ids)
+
+    page, page_size = _pagination_values(request)
+    total, start, end = _paginate_queryset(queryset, page, page_size)
+    rows = [serialize_moderation_account(user, active_by_user.get(user.id)) for user in queryset[start:end]]
+
+    from users.models import AccountSanction
+    sanctions = AccountSanction.objects.all()
+    return Response({
+        'summary': {
+            'total_accounts': User.objects.count(),
+            'active_suspensions': sum(row.kind == row.KIND_SUSPENSION for row in active_rows),
+            'permanent_bans': sum(row.kind == row.KIND_PERMANENT_BAN for row in active_rows),
+            'expired_sanctions': sanctions.filter(
+                kind=AccountSanction.KIND_SUSPENSION,
+                revoked_at__isnull=True,
+                ends_at__lte=now,
+            ).count(),
+            'revoked_sanctions': sanctions.filter(revoked_at__isnull=False).count(),
+        },
+        'count': total,
+        'page': page,
+        'page_size': page_size,
+        'next': page + 1 if end < total else None,
+        'previous': page - 1 if page > 1 else None,
+        'results': rows,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def account_moderation_history(request):
+    if not is_admin(request.user):
+        return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
+
+    from users.models import AccountSanction
+    from .sanctions import serialize_account_sanction
+
+    now = timezone.now()
+    queryset = AccountSanction.objects.select_related('user', 'applied_by', 'revoked_by').all()
+    user_id = request.query_params.get('user_id')
+    if user_id:
+        queryset = queryset.filter(user_id=user_id)
+    kind = str(request.query_params.get('kind') or '').strip()
+    if kind in dict(AccountSanction.KIND_CHOICES):
+        queryset = queryset.filter(kind=kind)
+    sanction_status = str(request.query_params.get('status') or '').strip().lower()
+    if sanction_status == AccountSanction.STATUS_ACTIVE:
+        queryset = queryset.filter(revoked_at__isnull=True).filter(
+            Q(kind=AccountSanction.KIND_PERMANENT_BAN)
+            | Q(kind=AccountSanction.KIND_SUSPENSION, ends_at__gt=now)
+        )
+    elif sanction_status == AccountSanction.STATUS_EXPIRED:
+        queryset = queryset.filter(
+            kind=AccountSanction.KIND_SUSPENSION, revoked_at__isnull=True, ends_at__lte=now
+        )
+    elif sanction_status == AccountSanction.STATUS_REVOKED:
+        queryset = queryset.filter(revoked_at__isnull=False)
+
+    page, page_size = _pagination_values(request)
+    total, start, end = _paginate_queryset(queryset, page, page_size)
+    results = []
+    for sanction in queryset[start:end]:
+        row = serialize_account_sanction(sanction)
+        row['username'] = sanction.user.username
+        row['email'] = sanction.user.email
+        row['role'] = sanction.user.role
+        row['role_display'] = sanction.user.get_role_display()
+        results.append(row)
+    return Response({
+        'count': total,
+        'page': page,
+        'page_size': page_size,
+        'next': page + 1 if end < total else None,
+        'previous': page - 1 if page > 1 else None,
+        'results': results,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def account_moderation_action(request, user_id):
+    if not is_admin(request.user):
+        return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
+
+    from community.models import Report
+    from users.models import AccountSanction, User
+    from .sanctions import active_sanctions_queryset, serialize_account_sanction
+
+    try:
+        target = User.objects.select_related('clinic_profile', 'business_profile', 'shelter_profile').get(pk=user_id)
+    except User.DoesNotExist:
+        return Response({'error': 'Usuario no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    if target.id == request.user.id:
+        return Response({'error': 'No podés sancionar tu propia cuenta.'}, status=status.HTTP_400_BAD_REQUEST)
+    if is_admin(target):
+        return Response({'error': 'No se puede sancionar una cuenta administradora desde este panel.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    action = str(request.data.get('action') or '').strip().lower()
+    now = timezone.now()
+    if action == 'reactivate':
+        note = str(request.data.get('revocation_note') or '').strip()[:1000]
+        active = list(active_sanctions_queryset(now).filter(user=target))
+        if not active:
+            return Response({'error': 'La cuenta no tiene una sanción activa.'}, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            for sanction in active:
+                sanction.revoked_at = now
+                sanction.revoked_by = request.user
+                sanction.revocation_note = note or 'Cuenta reactivada desde el panel de VetPaw.'
+                sanction.save(update_fields=['revoked_at', 'revoked_by', 'revocation_note', 'updated_at'])
+        return Response({
+            'message': 'La cuenta fue reactivada.',
+            'account': serialize_moderation_account(target, None),
+            'revoked_sanctions': [serialize_account_sanction(row) for row in active],
+        })
+
+    if action not in {'suspend', 'ban'}:
+        return Response({'error': 'Acción de moderación inválida.'}, status=status.HTTP_400_BAD_REQUEST)
+    reason = str(request.data.get('reason') or '').strip()
+    if not reason:
+        return Response({'error': 'El motivo visible para el usuario es obligatorio.'}, status=status.HTTP_400_BAD_REQUEST)
+    reason = reason[:1000]
+    internal_note = str(request.data.get('internal_note') or '').strip()[:2000]
+
+    source_report = None
+    source_report_id = request.data.get('source_report_id')
+    if source_report_id not in (None, ''):
+        try:
+            source_report = Report.objects.select_related('post', 'comment', 'reported_user').get(pk=source_report_id)
+        except (Report.DoesNotExist, TypeError, ValueError):
+            return Response({'error': 'El reporte asociado no existe.'}, status=status.HTTP_400_BAD_REQUEST)
+        if _report_target_user_id(source_report) != target.id:
+            return Response({'error': 'El reporte no corresponde a esta cuenta.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    kind = AccountSanction.KIND_PERMANENT_BAN if action == 'ban' else AccountSanction.KIND_SUSPENSION
+    ends_at = None
+    if action == 'suspend':
+        raw_custom_end = request.data.get('ends_at')
+        if raw_custom_end:
+            try:
+                ends_at = _parse_custom_suspension_end(raw_custom_end)
+            except ValueError as exc:
+                return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            try:
+                days = int(request.data.get('days'))
+            except (TypeError, ValueError):
+                return Response({'error': 'Elegí 1, 3, 7, 15 o 30 días, o una fecha personalizada.'}, status=status.HTTP_400_BAD_REQUEST)
+            if days not in {1, 3, 7, 15, 30}:
+                return Response({'error': 'La duración permitida es 1, 3, 7, 15 o 30 días.'}, status=status.HTTP_400_BAD_REQUEST)
+            ends_at = now + timedelta(days=days)
+        if ends_at <= now:
+            return Response({'error': 'La suspensión debe finalizar en una fecha futura.'}, status=status.HTTP_400_BAD_REQUEST)
+        if ends_at > now + timedelta(days=3650):
+            return Response({'error': 'La fecha de suspensión es demasiado lejana.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    with transaction.atomic():
+        replaced = list(active_sanctions_queryset(now).filter(user=target))
+        for previous in replaced:
+            previous.revoked_at = now
+            previous.revoked_by = request.user
+            previous.revocation_note = 'Reemplazada por una nueva medida de moderación.'
+            previous.save(update_fields=['revoked_at', 'revoked_by', 'revocation_note', 'updated_at'])
+        sanction = AccountSanction.objects.create(
+            user=target,
+            kind=kind,
+            reason=reason,
+            internal_note=internal_note,
+            starts_at=now,
+            ends_at=ends_at,
+            applied_by=request.user,
+            source_report_id=source_report.id if source_report else None,
+        )
+        if source_report:
+            source_report.status = Report.STATUS_ACTIONED
+            source_report.moderator_notes = internal_note or reason
+            source_report.reviewed_by = request.user
+            source_report.reviewed_at = now
+            source_report.save(update_fields=['status', 'moderator_notes', 'reviewed_by', 'reviewed_at'])
+
+    return Response({
+        'message': 'Cuenta expulsada permanentemente.' if action == 'ban' else 'Cuenta suspendida temporalmente.',
+        'account': serialize_moderation_account(target, sanction),
+        'sanction': serialize_account_sanction(sanction),
+    }, status=status.HTTP_201_CREATED)

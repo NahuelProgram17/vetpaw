@@ -1,7 +1,9 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from .models import User
+from .sanctions import get_active_sanction, sanction_error_payload
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework.exceptions import AuthenticationFailed
 from vetpaw.image_validation import validate_uploaded_image
 from .permissions import is_community_moderator, is_vetpaw_admin
 
@@ -47,6 +49,7 @@ class UserSerializer(serializers.ModelSerializer):
     profile_url = serializers.SerializerMethodField()
     profile_completion = serializers.SerializerMethodField()
     profile_logo = serializers.SerializerMethodField()
+    account_status = serializers.SerializerMethodField()
 
     def validate_avatar(self, value):
         return validate_uploaded_image(value, max_mb=3, label='La foto de perfil')
@@ -59,12 +62,21 @@ class UserSerializer(serializers.ModelSerializer):
             'created_at', 'is_approved', 'is_staff', 'is_superuser',
             'can_access_admin', 'can_moderate_community',
             'profile_name', 'profile_url', 'profile_completion', 'profile_logo',
+            'account_status',
         ]
         read_only_fields = [
             'id', 'created_at', 'is_approved', 'is_staff', 'is_superuser',
             'can_access_admin', 'can_moderate_community',
             'profile_name', 'profile_url', 'profile_completion', 'profile_logo',
+            'account_status',
         ]
+
+    def get_account_status(self, obj):
+        sanction = get_active_sanction(obj)
+        if not sanction:
+            return {'status': 'active', 'sanction': None}
+        payload = sanction_error_payload(sanction)
+        return {'status': payload['code'], 'sanction': payload['account_sanction']}
 
     def get_can_access_admin(self, obj):
         return is_vetpaw_admin(obj)
@@ -124,6 +136,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
         user = self.user
+        sanction = get_active_sanction(user)
+        if sanction:
+            raise AuthenticationFailed(detail=sanction_error_payload(sanction))
         if user.role in ('clinic', 'business', 'shelter') and not user.is_approved:
             labels = {
                 'clinic': 'veterinaria',
