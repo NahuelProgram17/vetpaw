@@ -94,6 +94,17 @@ def notification_message(notification):
         return f'{actor_name} solicitó un turno desde la comunidad. {notification.extra_text}'.strip()
     if notification.notification_type == CommunityNotification.TYPE_CLINIC_APPOINTMENT_UPDATE:
         return f'{actor_name} actualizó tu turno. {notification.extra_text}'.strip()
+    if notification.notification_type == CommunityNotification.TYPE_ADOPTION_APPLICATION:
+        animal_name = notification.adoption_animal.name if notification.adoption_animal_id else 'un animal'
+        return f'{actor_name} quiere adoptar a {animal_name}.'
+    if notification.notification_type == CommunityNotification.TYPE_ADOPTION_HELP_OFFER:
+        animal_name = notification.adoption_animal.name if notification.adoption_animal_id else 'un animal'
+        detail = f': {notification.extra_text}' if notification.extra_text else ''
+        return f'{actor_name} ofreció ayuda para {animal_name}{detail}.'
+    if notification.notification_type == CommunityNotification.TYPE_ADOPTION_APPLICATION_UPDATE:
+        animal_name = notification.adoption_animal.name if notification.adoption_animal_id else 'el animal'
+        detail = f' {notification.extra_text}' if notification.extra_text else ''
+        return f'{actor_name} actualizó tu solicitud para adoptar a {animal_name}.{detail}'.strip()
     return 'Tenés nueva actividad en VetPaw.'
 
 
@@ -112,6 +123,16 @@ def notification_target_url(notification):
         return f"/appointments?turno={notification.appointment_id or ''}"
     if notification.notification_type == CommunityNotification.TYPE_FOLLOW_REQUEST:
         return '/configuracion/privacidad?tab=solicitudes'
+    if notification.notification_type == CommunityNotification.TYPE_ADOPTION_APPLICATION:
+        application_id = notification.adoption_application_id or ''
+        return f'/refugio/adopciones?tab=apps&solicitud={application_id}'
+    if notification.notification_type == CommunityNotification.TYPE_ADOPTION_HELP_OFFER:
+        offer_id = notification.help_offer_id or ''
+        return f'/refugio/adopciones?tab=offers&ayuda={offer_id}'
+    if notification.notification_type == CommunityNotification.TYPE_ADOPTION_APPLICATION_UPDATE:
+        animal_id = notification.adoption_animal_id or ''
+        application_id = notification.adoption_application_id or ''
+        return f'/adopciones/{animal_id}?solicitud={application_id}'
     if notification.notification_type == CommunityNotification.TYPE_FOLLOW:
         if notification.pet_id:
             profile = getattr(notification.pet, 'social_profile', None)
@@ -226,7 +247,8 @@ def send_push_for_notification(notification_id):
         notification = CommunityNotification.objects.select_related(
             'actor', 'actor__clinic_profile', 'actor__business_profile',
             'actor__shelter_profile', 'pet', 'business', 'shelter', 'post__pet',
-            'post__clinic', 'post__related_lost_pet',
+            'post__clinic', 'post__related_lost_pet', 'adoption_animal',
+            'adoption_application', 'help_offer',
         ).get(pk=notification_id)
     except CommunityNotification.DoesNotExist:
         return {'sent': 0, 'configured': True}

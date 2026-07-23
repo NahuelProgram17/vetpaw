@@ -479,6 +479,7 @@ class CommunityNotificationViewSet(mixins.ListModelMixin, viewsets.GenericViewSe
             'pet__social_profile', 'clinic', 'business', 'shelter',
             'post__pet', 'post__clinic', 'post__business', 'post__shelter',
             'post__related_lost_pet', 'comment',
+            'adoption_animal', 'adoption_application', 'help_offer',
         )
         unread = self.request.query_params.get('unread')
         if unread in ('1', 'true', 'True'):

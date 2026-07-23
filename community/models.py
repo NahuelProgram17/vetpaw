@@ -543,6 +543,9 @@ class CommunityNotification(models.Model):
     TYPE_BUSINESS_RESERVATION_UPDATE = 'business_reservation_update'
     TYPE_CLINIC_APPOINTMENT = 'clinic_appointment'
     TYPE_CLINIC_APPOINTMENT_UPDATE = 'clinic_appointment_update'
+    TYPE_ADOPTION_APPLICATION = 'adoption_application'
+    TYPE_ADOPTION_HELP_OFFER = 'adoption_help_offer'
+    TYPE_ADOPTION_APPLICATION_UPDATE = 'adoption_application_update'
     TYPE_CHOICES = [
         (TYPE_REACTION, 'Patita en publicación'),
         (TYPE_COMMENT, 'Comentario en publicación'),
@@ -556,6 +559,9 @@ class CommunityNotification(models.Model):
         (TYPE_BUSINESS_RESERVATION_UPDATE, 'Actualización de reserva comercial'),
         (TYPE_CLINIC_APPOINTMENT, 'Nueva solicitud de turno veterinario'),
         (TYPE_CLINIC_APPOINTMENT_UPDATE, 'Actualización de turno veterinario'),
+        (TYPE_ADOPTION_APPLICATION, 'Nueva solicitud de adopción'),
+        (TYPE_ADOPTION_HELP_OFFER, 'Nuevo ofrecimiento de ayuda'),
+        (TYPE_ADOPTION_APPLICATION_UPDATE, 'Actualización de solicitud de adopción'),
     ]
 
     recipient = models.ForeignKey(
@@ -612,6 +618,27 @@ class CommunityNotification(models.Model):
     )
     appointment = models.ForeignKey(
         'appointments.Appointment',
+        on_delete=models.CASCADE,
+        related_name='community_notifications',
+        null=True,
+        blank=True,
+    )
+    adoption_animal = models.ForeignKey(
+        'adoptions.AdoptionAnimal',
+        on_delete=models.CASCADE,
+        related_name='community_notifications',
+        null=True,
+        blank=True,
+    )
+    adoption_application = models.ForeignKey(
+        'adoptions.AdoptionApplication',
+        on_delete=models.CASCADE,
+        related_name='community_notifications',
+        null=True,
+        blank=True,
+    )
+    help_offer = models.ForeignKey(
+        'adoptions.HelpOffer',
         on_delete=models.CASCADE,
         related_name='community_notifications',
         null=True,
@@ -680,6 +707,22 @@ class CommunityNotification(models.Model):
                 fields=['recipient', 'actor', 'comment', 'notification_type'],
                 condition=Q(notification_type='mention', comment__isnull=False),
                 name='unique_comment_mention_notification',
+            ),
+            models.UniqueConstraint(
+                fields=['recipient', 'actor', 'adoption_application', 'notification_type'],
+                condition=Q(
+                    notification_type='adoption_application',
+                    adoption_application__isnull=False,
+                ),
+                name='unique_adoption_application_notification',
+            ),
+            models.UniqueConstraint(
+                fields=['recipient', 'actor', 'help_offer', 'notification_type'],
+                condition=Q(
+                    notification_type='adoption_help_offer',
+                    help_offer__isnull=False,
+                ),
+                name='unique_adoption_help_offer_notification',
             ),
         ]
 

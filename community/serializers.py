@@ -749,6 +749,9 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
     shelter_id = serializers.IntegerField(source='shelter.id', read_only=True)
     comment_id = serializers.IntegerField(source='comment.id', read_only=True)
     appointment_id = serializers.IntegerField(source='appointment.id', read_only=True)
+    adoption_animal_id = serializers.IntegerField(source='adoption_animal.id', read_only=True)
+    adoption_application_id = serializers.IntegerField(source='adoption_application.id', read_only=True)
+    help_offer_id = serializers.IntegerField(source='help_offer.id', read_only=True)
 
     class Meta:
         model = CommunityNotification
@@ -756,11 +759,13 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
             'id', 'notification_type', 'actor', 'message', 'extra_text',
             'is_read', 'read_at', 'created_at', 'target_url', 'target_type',
             'post_id', 'pet_id', 'clinic_id', 'business_id', 'shelter_id', 'comment_id', 'appointment_id',
+            'adoption_animal_id', 'adoption_application_id', 'help_offer_id',
         ]
         read_only_fields = [
             'id', 'notification_type', 'actor', 'message', 'extra_text',
             'is_read', 'read_at', 'created_at', 'target_url', 'target_type',
             'post_id', 'pet_id', 'clinic_id', 'business_id', 'shelter_id', 'comment_id', 'appointment_id',
+            'adoption_animal_id', 'adoption_application_id', 'help_offer_id',
         ]
 
     def _actor_name(self, obj):
@@ -817,6 +822,12 @@ class CommunityNotificationSerializer(serializers.ModelSerializer):
             }:
                 return 'clinic_appointment'
             return 'business'
+        if obj.notification_type in {
+            CommunityNotification.TYPE_ADOPTION_APPLICATION,
+            CommunityNotification.TYPE_ADOPTION_HELP_OFFER,
+            CommunityNotification.TYPE_ADOPTION_APPLICATION_UPDATE,
+        }:
+            return 'adoption'
         if obj.comment_id:
             return 'comment'
         if obj.post_id:

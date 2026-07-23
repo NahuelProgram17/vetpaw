@@ -27,7 +27,7 @@ class AdoptionAnimalSerializer(serializers.ModelSerializer):
 
 class AdoptionApplicationSerializer(serializers.ModelSerializer):
     applicant_name=serializers.SerializerMethodField(); animal_name=serializers.CharField(source='animal.name',read_only=True)
-    class Meta: model=AdoptionApplication; fields=['id','animal','animal_name','applicant_name','phone','locality','housing_type','has_other_animals','other_animals','experience','motivation','follow_up_available','accepts_requirements','status','shelter_notes','created_at','updated_at']; read_only_fields=['applicant_name','status','shelter_notes','created_at','updated_at']
+    class Meta: model=AdoptionApplication; fields=['id','animal','animal_name','applicant_name','phone','locality','housing_type','has_other_animals','other_animals','experience','motivation','follow_up_available','accepts_requirements','status','shelter_notes','created_at','updated_at']; read_only_fields=['animal','applicant_name','status','shelter_notes','created_at','updated_at']
     def get_applicant_name(self,obj): return obj.applicant.get_full_name().strip() or obj.applicant.username
     def validate_accepts_requirements(self,v):
         if not v: raise serializers.ValidationError('Tenés que aceptar los requisitos del refugio.')
@@ -35,7 +35,7 @@ class AdoptionApplicationSerializer(serializers.ModelSerializer):
 
 class HelpOfferSerializer(serializers.ModelSerializer):
     user_name=serializers.SerializerMethodField(); help_type_display=serializers.CharField(source='get_help_type_display',read_only=True)
-    class Meta: model=HelpOffer; fields=['id','animal','user_name','help_type','help_type_display','message','phone','created_at']; read_only_fields=['user_name','created_at']
+    class Meta: model=HelpOffer; fields=['id','animal','user_name','help_type','help_type_display','message','phone','created_at']; read_only_fields=['animal','user_name','created_at']
     def get_user_name(self,obj): return obj.user.get_full_name().strip() or obj.user.username
 
 class AdoptionStatusHistorySerializer(serializers.ModelSerializer):

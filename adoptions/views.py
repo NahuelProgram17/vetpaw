@@ -8,6 +8,11 @@ from partners.models import ShelterProfile
 from community.models import BlockedUser, Post
 from .models import AdoptionAnimal, AdoptionPhoto, AdoptionApplication, HelpOffer, AdoptionStatusHistory
 from .serializers import AdoptionAnimalSerializer, AdoptionApplicationSerializer, HelpOfferSerializer, AdoptionStatusHistorySerializer
+from .notifications import (
+    notify_applicant_application_update,
+    notify_shelter_help_offer,
+    notify_shelter_new_application,
+)
 
 def shelter_for(user):
     return ShelterProfile.objects.filter(owner=user,is_active=True).first()
@@ -87,7 +92,8 @@ class ApplicationCreateView(generics.CreateAPIView):
     def perform_create(self,serializer):
         animal=visible_qs(self.request.user).get(pk=self.kwargs['pk'])
         if animal.shelter.owner_id==self.request.user.id: raise PermissionDenied('No podés solicitar tu propio animal.')
-        serializer.save(animal=animal,applicant=self.request.user)
+        application = serializer.save(animal=animal, applicant=self.request.user)
+        notify_shelter_new_application(application)
 
 class MyApplicationsView(generics.ListAPIView):
     serializer_class=AdoptionApplicationSerializer; permission_classes=[permissions.IsAuthenticated]
@@ -106,16 +112,34 @@ class ApplicationStatusView(APIView):
         app=AdoptionApplication.objects.select_related('animal__shelter').get(pk=pk)
         if app.animal.shelter.owner_id!=request.user.id: raise PermissionDenied()
         allowed=dict(AdoptionApplication.STATUS_CHOICES)
-        new=request.data.get('status')
+        new=request.data.get('status', app.status)
         if new not in allowed: return Response({'status':['Estado inválido.']},status=400)
-        app.status=new; app.shelter_notes=request.data.get('shelter_notes',app.shelter_notes)[:1500]; app.save(update_fields=['status','shelter_notes','updated_at'])
-        if new==AdoptionApplication.STATUS_COMPLETED:
+        old_status = app.status
+        old_notes = app.shelter_notes
+        new_notes = str(request.data.get('shelter_notes', app.shelter_notes) or '')[:1500]
+        status_changed = old_status != new
+        notes_changed = old_notes != new_notes
+        app.status = new
+        app.shelter_notes = new_notes
+        if status_changed or notes_changed:
+            app.save(update_fields=['status', 'shelter_notes', 'updated_at'])
+        if status_changed and new==AdoptionApplication.STATUS_COMPLETED:
             old=app.animal.status; app.animal.status=AdoptionAnimal.STATUS_ADOPTED; app.animal.save(update_fields=['status','updated_at']); AdoptionStatusHistory.objects.create(animal=app.animal,old_status=old,new_status=app.animal.status,changed_by=request.user)
+        notify_applicant_application_update(
+            app,
+            status_changed=status_changed,
+            notes_changed=notes_changed,
+        )
         return Response(AdoptionApplicationSerializer(app,context={'request':request}).data)
 
 class HelpOfferCreateView(generics.CreateAPIView):
     serializer_class=HelpOfferSerializer; permission_classes=[permissions.IsAuthenticated]
-    def perform_create(self,serializer): serializer.save(animal=visible_qs(self.request.user).get(pk=self.kwargs['pk']),user=self.request.user)
+    def perform_create(self,serializer):
+        offer = serializer.save(
+            animal=visible_qs(self.request.user).get(pk=self.kwargs['pk']),
+            user=self.request.user,
+        )
+        notify_shelter_help_offer(offer)
 
 class ShelterHelpOffersView(generics.ListAPIView):
     serializer_class=HelpOfferSerializer; permission_classes=[permissions.IsAuthenticated]
