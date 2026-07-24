@@ -202,7 +202,7 @@ class PublicClinicSerializer(serializers.ModelSerializer):
         return cache[obj.pk]
 
     def get_is_verified(self, obj):
-        return bool(obj.owner_id and obj.owner.is_approved and obj.is_active)
+        return bool(obj.owner_id and obj.owner.is_professionally_verified and obj.is_active)
 
     def get_upcoming_campaigns(self, obj):
         from django.utils import timezone

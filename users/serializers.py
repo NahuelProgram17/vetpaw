@@ -50,6 +50,7 @@ class UserSerializer(serializers.ModelSerializer):
     profile_completion = serializers.SerializerMethodField()
     profile_logo = serializers.SerializerMethodField()
     account_status = serializers.SerializerMethodField()
+    professional_verification = serializers.SerializerMethodField()
 
     def validate_avatar(self, value):
         return validate_uploaded_image(value, max_mb=3, label='La foto de perfil')
@@ -62,13 +63,13 @@ class UserSerializer(serializers.ModelSerializer):
             'created_at', 'is_approved', 'is_staff', 'is_superuser',
             'can_access_admin', 'can_moderate_community',
             'profile_name', 'profile_url', 'profile_completion', 'profile_logo',
-            'account_status',
+            'account_status', 'professional_verification',
         ]
         read_only_fields = [
             'id', 'created_at', 'is_approved', 'is_staff', 'is_superuser',
             'can_access_admin', 'can_moderate_community',
             'profile_name', 'profile_url', 'profile_completion', 'profile_logo',
-            'account_status',
+            'account_status', 'professional_verification',
         ]
 
     def get_account_status(self, obj):
@@ -77,6 +78,12 @@ class UserSerializer(serializers.ModelSerializer):
             return {'status': 'active', 'sanction': None}
         payload = sanction_error_payload(sanction)
         return {'status': payload['code'], 'sanction': payload['account_sanction']}
+
+    def get_professional_verification(self, obj):
+        if not obj.is_professional:
+            return None
+        from .verification import serialize_professional_verification
+        return serialize_professional_verification(obj)
 
     def get_can_access_admin(self, obj):
         return is_vetpaw_admin(obj)
@@ -205,6 +212,7 @@ class RegisterClinicSerializer(serializers.ModelSerializer):
         }
         validated_data.pop('password2')
         validated_data['role'] = 'clinic'
+        validated_data['professional_verification_status'] = User.VERIFICATION_PENDING
         user = User.objects.create_user(**validated_data)
         user._clinic_data = clinic_data
         return user
@@ -267,6 +275,7 @@ class RegisterBusinessSerializer(serializers.ModelSerializer):
         }
         validated_data.pop('password2')
         validated_data['role'] = 'business'
+        validated_data['professional_verification_status'] = User.VERIFICATION_PENDING
         user = User.objects.create_user(**validated_data)
         user._partner_profile_data = profile_data
         return user
@@ -329,6 +338,7 @@ class RegisterShelterSerializer(serializers.ModelSerializer):
         }
         validated_data.pop('password2')
         validated_data['role'] = 'shelter'
+        validated_data['professional_verification_status'] = User.VERIFICATION_PENDING
         user = User.objects.create_user(**validated_data)
         user._partner_profile_data = profile_data
         return user

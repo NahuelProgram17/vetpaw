@@ -1180,3 +1180,177 @@ def abuse_signal_action(request, signal_id):
         }[decision],
         'signal': _serialize_abuse_signal(signal),
     })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def professional_verifications(request):
+    if not is_admin(request.user):
+        return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
+
+    from django.db.models import Count
+    from users.models import User
+    from users.verification import serialize_professional_verification
+
+    queryset = User.objects.filter(
+        role__in=('clinic', 'business', 'shelter')
+    ).select_related(
+        'clinic_profile', 'business_profile', 'shelter_profile', 'verified_by'
+    ).annotate(
+        verification_decisions_count=Count('professional_verification_decisions', distinct=True)
+    ).order_by('-verification_updated_at', '-date_joined')
+
+    role = str(request.query_params.get('role') or '').strip()
+    if role in {'clinic', 'business', 'shelter'}:
+        queryset = queryset.filter(role=role)
+
+    verification_status = str(request.query_params.get('status') or '').strip()
+    if verification_status in dict(User.VERIFICATION_STATUS_CHOICES):
+        queryset = queryset.filter(professional_verification_status=verification_status)
+
+    approved = str(request.query_params.get('approved') or '').strip().lower()
+    if approved in {'true', '1', 'yes'}:
+        queryset = queryset.filter(is_approved=True)
+    elif approved in {'false', '0', 'no'}:
+        queryset = queryset.filter(is_approved=False)
+
+    search = str(request.query_params.get('search') or '').strip()
+    if search:
+        queryset = queryset.filter(
+            Q(username__icontains=search)
+            | Q(email__icontains=search)
+            | Q(first_name__icontains=search)
+            | Q(last_name__icontains=search)
+            | Q(clinic_profile__name__icontains=search)
+            | Q(business_profile__name__icontains=search)
+            | Q(shelter_profile__name__icontains=search)
+        )
+
+    page, page_size = _pagination_values(request)
+    total, start, end = _paginate_queryset(queryset, page, page_size)
+
+    summary = {
+        value: User.objects.filter(
+            role__in=('clinic', 'business', 'shelter'),
+            professional_verification_status=value,
+        ).count()
+        for value, _label in User.VERIFICATION_STATUS_CHOICES
+        if value != User.VERIFICATION_NOT_APPLICABLE
+    }
+    return Response({
+        'summary': summary,
+        'count': total,
+        'page': page,
+        'page_size': page_size,
+        'next': page + 1 if end < total else None,
+        'previous': page - 1 if page > 1 else None,
+        'results': [
+            serialize_professional_verification(user, include_internal=True)
+            for user in queryset[start:end]
+        ],
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def professional_verification_history(request):
+    if not is_admin(request.user):
+        return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
+
+    from users.models import ProfessionalVerificationDecision
+    from users.verification import serialize_verification_decision
+
+    queryset = ProfessionalVerificationDecision.objects.select_related(
+        'user', 'decided_by'
+    ).order_by('-created_at')
+
+    user_id = request.query_params.get('user_id')
+    if user_id not in (None, ''):
+        try:
+            queryset = queryset.filter(user_id=int(user_id))
+        except (TypeError, ValueError):
+            return Response({'error': 'El usuario indicado no es válido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    target_status = str(request.query_params.get('status') or '').strip()
+    if target_status:
+        queryset = queryset.filter(to_status=target_status)
+
+    page, page_size = _pagination_values(request)
+    total, start, end = _paginate_queryset(queryset, page, page_size)
+    return Response({
+        'count': total,
+        'page': page,
+        'page_size': page_size,
+        'next': page + 1 if end < total else None,
+        'previous': page - 1 if page > 1 else None,
+        'results': [serialize_verification_decision(row) for row in queryset[start:end]],
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def professional_verification_action(request, user_id):
+    if not is_admin(request.user):
+        return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
+
+    from users.models import User
+    from users.verification import (
+        apply_verification_status,
+        serialize_professional_verification,
+        serialize_verification_decision,
+    )
+
+    try:
+        target = User.objects.select_related(
+            'clinic_profile', 'business_profile', 'shelter_profile', 'verified_by'
+        ).get(pk=user_id, role__in=('clinic', 'business', 'shelter'))
+    except User.DoesNotExist:
+        return Response({'error': 'Perfil profesional no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+    action = str(request.data.get('action') or '').strip().lower()
+    mapping = {
+        'pending': User.VERIFICATION_PENDING,
+        'review': User.VERIFICATION_IN_REVIEW,
+        'request_corrections': User.VERIFICATION_CORRECTIONS,
+        'verify': User.VERIFICATION_VERIFIED,
+        'reject': User.VERIFICATION_REJECTED,
+        'withdraw': User.VERIFICATION_WITHDRAWN,
+    }
+    if action not in mapping:
+        return Response({
+            'error': 'Acción inválida. Elegí pendiente, revisar, pedir correcciones, verificar, rechazar o retirar.'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    public_note = str(request.data.get('public_note') or '').strip()[:1200]
+    internal_note = str(request.data.get('internal_note') or '').strip()[:2000]
+    if action in {'request_corrections', 'reject', 'withdraw'} and not public_note:
+        return Response({
+            'error': 'Escribí el motivo visible para la cuenta profesional.'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        with transaction.atomic():
+            decision = apply_verification_status(
+                user=target,
+                target_status=mapping[action],
+                public_note=public_note,
+                internal_note=internal_note,
+                decided_by=request.user,
+            )
+    except ValueError as exc:
+        return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    target.refresh_from_db()
+    messages = {
+        'pending': 'La verificación volvió al estado pendiente.',
+        'review': 'La verificación quedó en revisión.',
+        'request_corrections': 'Se solicitaron correcciones al perfil profesional.',
+        'verify': 'El perfil profesional fue verificado.',
+        'reject': 'La verificación fue rechazada.',
+        'withdraw': 'La insignia de verificación fue retirada.',
+    }
+    return Response({
+        'message': messages[action],
+        'verification': serialize_professional_verification(target, include_internal=True),
+        'decision': serialize_verification_decision(decision),
+    })

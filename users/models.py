@@ -22,6 +22,39 @@ class User(AbstractUser):
         choices=ROLE_CHOICES,
         default='owner'
     )
+
+    VERIFICATION_NOT_APPLICABLE = 'not_applicable'
+    VERIFICATION_PENDING = 'pending'
+    VERIFICATION_IN_REVIEW = 'in_review'
+    VERIFICATION_CORRECTIONS = 'corrections'
+    VERIFICATION_VERIFIED = 'verified'
+    VERIFICATION_REJECTED = 'rejected'
+    VERIFICATION_WITHDRAWN = 'withdrawn'
+    VERIFICATION_STATUS_CHOICES = [
+        (VERIFICATION_NOT_APPLICABLE, 'No corresponde'),
+        (VERIFICATION_PENDING, 'Pendiente'),
+        (VERIFICATION_IN_REVIEW, 'En revisión'),
+        (VERIFICATION_CORRECTIONS, 'Requiere correcciones'),
+        (VERIFICATION_VERIFIED, 'Verificada'),
+        (VERIFICATION_REJECTED, 'Rechazada'),
+        (VERIFICATION_WITHDRAWN, 'Verificación retirada'),
+    ]
+    professional_verification_status = models.CharField(
+        max_length=24,
+        choices=VERIFICATION_STATUS_CHOICES,
+        default=VERIFICATION_NOT_APPLICABLE,
+    )
+    verification_public_note = models.TextField(blank=True, max_length=1200)
+    verification_updated_at = models.DateTimeField(null=True, blank=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    verified_by = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='professional_verifications_granted',
+    )
+
     phone = models.CharField(max_length=20, blank=True)
     province = models.CharField(max_length=100, blank=True)
     locality = models.CharField(max_length=100, blank=True)
@@ -45,6 +78,17 @@ class User(AbstractUser):
     created_at = models.DateTimeField(auto_now_add=True)
     is_approved = models.BooleanField(default=False)
 
+    def save(self, *args, **kwargs):
+        if (
+            self.role in {'clinic', 'business', 'shelter'}
+            and self.professional_verification_status == self.VERIFICATION_NOT_APPLICABLE
+        ):
+            self.professional_verification_status = self.VERIFICATION_PENDING
+            update_fields = kwargs.get('update_fields')
+            if update_fields is not None:
+                kwargs['update_fields'] = set(update_fields) | {'professional_verification_status'}
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.username} ({self.role})"
 
@@ -63,6 +107,48 @@ class User(AbstractUser):
     @property
     def is_shelter(self):
         return self.role == 'shelter'
+
+    @property
+    def is_professional(self):
+        return self.role in {'clinic', 'business', 'shelter'}
+
+    @property
+    def is_professionally_verified(self):
+        return bool(
+            self.is_professional
+            and self.is_approved
+            and self.professional_verification_status == self.VERIFICATION_VERIFIED
+        )
+
+
+class ProfessionalVerificationDecision(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='professional_verification_decisions',
+    )
+    from_status = models.CharField(max_length=24, choices=User.VERIFICATION_STATUS_CHOICES)
+    to_status = models.CharField(max_length=24, choices=User.VERIFICATION_STATUS_CHOICES)
+    public_note = models.TextField(blank=True, max_length=1200)
+    internal_note = models.TextField(blank=True, max_length=2000)
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='professional_verification_decisions_made',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at'], name='users_profver_user_created_idx'),
+            models.Index(fields=['to_status', '-created_at'], name='users_pver_status_created'),
+        ]
+
+    def __str__(self):
+        return f'{self.user} — {self.get_to_status_display()}'
 
 
 class AccountSanction(models.Model):

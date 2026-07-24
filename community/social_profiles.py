@@ -161,7 +161,7 @@ def identity_for_target(profile_type, target, request=None):
             'subtitle': ' · '.join(filter(None, [target.locality, target.province])),
             'photo': absolute_file_url(request, target.logo),
             'profile_url': f'/clinicas/{target.slug}',
-            'verified': bool(target.owner and target.owner.is_approved),
+            'verified': bool(target.owner and target.owner.is_professionally_verified),
             'owner_user_id': target.owner_id,
         }
     if profile_type == 'business':

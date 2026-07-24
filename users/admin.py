@@ -1,16 +1,16 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import AbuseAction, AbuseSignal, AccountSanction, User
+from .models import AbuseAction, AbuseSignal, AccountSanction, ProfessionalVerificationDecision, User
 
 
 @admin.register(User)
 class CustomUserAdmin(UserAdmin):
-    list_display = ['username', 'email', 'first_name', 'last_name', 'role', 'is_approved', 'is_active']
-    list_filter = ['role', 'is_active', 'is_approved']
+    list_display = ['username', 'email', 'first_name', 'last_name', 'role', 'is_approved', 'professional_verification_status', 'is_active']
+    list_filter = ['role', 'is_active', 'is_approved', 'professional_verification_status']
     actions = ['approve_professional_profiles', 'unapprove_professional_profiles']
     fieldsets = UserAdmin.fieldsets + (
-        ('VetPaw', {'fields': ('role', 'phone', 'province', 'locality', 'bio', 'avatar', 'is_approved')}),
+        ('VetPaw', {'fields': ('role', 'phone', 'province', 'locality', 'bio', 'avatar', 'is_approved', 'professional_verification_status', 'verification_public_note', 'verification_updated_at', 'verified_at', 'verified_by')}),
     )
 
     @admin.action(description='✅ Aprobar perfiles profesionales seleccionados')
@@ -22,6 +22,14 @@ class CustomUserAdmin(UserAdmin):
     def unapprove_professional_profiles(self, request, queryset):
         updated = queryset.filter(role__in=('clinic', 'business', 'shelter')).update(is_approved=False)
         self.message_user(request, f'{updated} perfiles profesionales quedaron pendientes.')
+
+
+@admin.register(ProfessionalVerificationDecision)
+class ProfessionalVerificationDecisionAdmin(admin.ModelAdmin):
+    list_display = ['user', 'from_status', 'to_status', 'decided_by', 'created_at']
+    list_filter = ['from_status', 'to_status', 'created_at']
+    search_fields = ['user__username', 'user__email', 'public_note', 'internal_note']
+    readonly_fields = ['created_at']
 
 
 @admin.register(AccountSanction)

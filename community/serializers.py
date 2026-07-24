@@ -340,7 +340,7 @@ class PostSerializer(serializers.ModelSerializer):
         payload = {
             'type': content_type,
             'label': labels.get(content_type, 'Publicación veterinaria'),
-            'verified': bool(obj.clinic.owner_id and obj.clinic.owner.is_approved and obj.clinic.is_active),
+            'verified': bool(obj.clinic.owner_id and obj.clinic.owner.is_professionally_verified and obj.clinic.is_active),
             'clinic_id': obj.clinic_id,
             'clinic_slug': obj.clinic.slug,
             # La Comunidad es informativa. Los turnos se solicitan únicamente

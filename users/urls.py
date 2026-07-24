@@ -10,6 +10,8 @@ from .admin_panel_views import (
     abuse_accounts, abuse_signal_action, abuse_signals,
     account_moderation_accounts, account_moderation_action, account_moderation_history,
     admin_panel, clinic_plan_action,
+    professional_verification_action, professional_verification_history,
+    professional_verifications,
 )
 
 
@@ -31,6 +33,9 @@ urlpatterns = [
     path('admin/abuse/signals/', abuse_signals, name='admin-abuse-signals'),
     path('admin/abuse/accounts/', abuse_accounts, name='admin-abuse-accounts'),
     path('admin/abuse/signals/<int:signal_id>/', abuse_signal_action, name='admin-abuse-signal-action'),
+    path('admin/verifications/', professional_verifications, name='admin-professional-verifications'),
+    path('admin/verifications/history/', professional_verification_history, name='admin-professional-verification-history'),
+    path('admin/verifications/<int:user_id>/', professional_verification_action, name='admin-professional-verification-action'),
     path('admin/approve-clinic/<int:user_id>/', ApproveClinicView.as_view(), name='admin-approve-clinic'),
     path('admin/reject-clinic/<int:user_id>/', RejectClinicView.as_view(), name='admin-reject-clinic'),
     path('admin/approve-profile/<int:user_id>/', ApproveProfessionalProfileView.as_view(), name='admin-approve-profile'),
