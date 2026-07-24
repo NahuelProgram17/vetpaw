@@ -283,6 +283,7 @@ class Command(BaseCommand):
 
         unread = Message.objects.filter(
             read=False,
+            unread_reminder_sent=False,
             created_at__lte=cutoff,
         ).select_related('recipient', 'sender')
 
@@ -294,14 +295,17 @@ class Command(BaseCommand):
                     'user':    msg.recipient,
                     'count':   0,
                     'senders': set(),
+                    'message_ids': [],
                 }
             by_recipient[uid]['count'] += 1
             by_recipient[uid]['senders'].add(msg.sender.username)
+            by_recipient[uid]['message_ids'].append(msg.id)
 
         for uid, data in by_recipient.items():
             user    = data['user']
             count   = data['count']
-            senders = ', '.join(data['senders'])
+            senders = ', '.join(sorted(data['senders']))
+            message_ids = data['message_ids']
 
             if not user.email:
                 continue
@@ -373,6 +377,7 @@ class Command(BaseCommand):
                     html_message=html,
                     fail_silently=False,
                 )
+                Message.objects.filter(id__in=message_ids).update(unread_reminder_sent=True)
                 self.stdout.write(self.style.SUCCESS(f"  💬 Aviso mensajes → {user.email} ({count} sin leer de {senders})"))
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f"  ✗ Error mensajes [{uid}]: {e}"))

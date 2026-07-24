@@ -5,28 +5,35 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch:
 
+concurrency:
+  group: vetpaw-send-reminders
+  cancel-in-progress: false
+
 jobs:
   send-reminders:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       SECRET_KEY: ${{ secrets.SECRET_KEY }}
-      DB_HOST: yamanote.proxy.rlwy.net
-      DB_PORT: 44224
-      DB_NAME: railway
-      DB_USER: postgres
+      DB_HOST: ${{ vars.DB_HOST || 'yamanote.proxy.rlwy.net' }}
+      DB_PORT: ${{ vars.DB_PORT || '44224' }}
+      DB_NAME: ${{ vars.DB_NAME || 'railway' }}
+      DB_USER: ${{ vars.DB_USER || 'postgres' }}
       DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-      DEFAULT_FROM_EMAIL: VetPaw <onboarding@resend.dev>
+      DEFAULT_FROM_EMAIL: ${{ vars.DEFAULT_FROM_EMAIL || 'VetPaw <onboarding@resend.dev>' }}
       DEBUG: "False"
+      ALLOWED_HOSTS: "localhost,127.0.0.1"
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+          cache: pip
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run send_reminders
+      - name: Run reminders
         run: python manage.py send_reminders

@@ -1,98 +1,70 @@
-# 🐾 VetPaw — Backend API
+# VetPaw — Backend API
 
-**Plataforma web que conecta veterinarias con dueños de mascotas.**
-Gestión de turnos, fichas médicas, historial clínico, mascotas perdidas y comunicación directa entre profesionales y clientes.
+Backend de la plataforma VetPaw: comunidad de mascotas, turnos veterinarios,
+historial clínico, mensajería, adopciones, mascotas perdidas, perfiles
+profesionales, negocios y moderación.
 
-🌐 **App en producción:** [www.vetpaw.com.ar](https://www.vetpaw.com.ar)
-📂 **Frontend repo:** [vetpaw-frontend](https://github.com/NahuelProgram17/vetpaw-frontend)
+- Producción: `https://www.vetpaw.com.ar`
+- API de estado: `/api/health/`
+- Documentación Swagger: `/api/docs/`
 
----
+## Tecnología
 
-## Stack
-
-- **Python 3.12** + **Django 5.2** + **Django REST Framework**
-- **PostgreSQL** (Railway)
-- **JWT** (SimpleJWT) para autenticación
-- **Cloudinary** para almacenamiento de imágenes
-- **APScheduler** para recordatorios automáticos por email (turnos y vacunas)
-- **Whitenoise** para archivos estáticos
-- **Gunicorn** como servidor WSGI
-- **Railway** para deploy
-
-## Funcionalidades
-
-- Registro y login con roles diferenciados (dueño / veterinario / clínica)
-- CRUD completo de mascotas con foto (upload a Cloudinary)
-- Sistema de turnos: solicitud, confirmación, cancelación
-- Ficha médica y historial de visitas por mascota
-- Recordatorios automáticos por email de turnos y vacunas próximas
-- Reportes de mascotas perdidas
-- Mensajería interna entre dueños y veterinarios
-- Panel de administración Django
-- Formulario de contacto y solicitud para sumar veterinarias
-
-## Estructura del proyecto
-
-```
-vetpaw/
-├── vetpaw/          # Configuración principal (settings, urls, wsgi)
-├── users/           # Registro, login, perfiles, roles
-├── pets/            # Mascotas, fichas médicas, historial
-├── clinics/         # Clínicas y veterinarios
-├── appointments/    # Turnos y agenda
-├── messages_app/    # Mensajería interna
-├── lost_pets/       # Reportes de mascotas perdidas
-├── contact/         # Formulario de contacto
-├── manage.py
-├── requirements.txt
-└── Procfile
-```
+- Python 3.13 / Django 5.2 / Django REST Framework
+- PostgreSQL en Railway
+- JWT con SimpleJWT
+- Cloudinary para imágenes y archivos
+- Resend para correos
+- Web Push con VAPID
+- Gunicorn y Whitenoise
 
 ## Instalación local
 
-```bash
-# Clonar el repositorio
-git clone https://github.com/NahuelProgram17/vetpaw.git
-cd vetpaw
-
-# Crear entorno virtual
+```powershell
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-venv\Scripts\activate     # Windows
-
-# Instalar dependencias
+.\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-
-# Configurar variables de entorno (.env)
-# DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT
-# CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
-# SECRET_KEY, DEBUG=True
-
-# Migraciones y servidor
+Copy-Item .env.example .env
 python manage.py migrate
 python manage.py runserver
 ```
 
-## API Endpoints principales
+Nunca subas `.env`, backups ni credenciales a GitHub.
 
-| Recurso | Método | Endpoint |
-|---------|--------|----------|
-| Registro | POST | `/api/users/register/` |
-| Login (JWT) | POST | `/api/users/token/` |
-| Mascotas | GET/POST | `/api/pets/` |
-| Turnos | GET/POST | `/api/appointments/` |
-| Clínicas | GET | `/api/clinics/` |
-| Mensajes | GET/POST | `/api/messages/` |
-| Mascotas perdidas | GET/POST | `/api/lost-pets/` |
+## Validación
 
-## Deploy
+```powershell
+python manage.py check --settings=vetpaw.test_settings
+python manage.py makemigrations --check --dry-run --settings=vetpaw.test_settings
+python manage.py test users partners community commerce adoptions lost_pets pets clinics appointments messaging contact operations --settings=vetpaw.test_settings
+```
 
-El backend corre en **Railway** con PostgreSQL y se conecta al frontend en Vercel.
-Variables de entorno configuradas en el dashboard de Railway.
+## Auditoría de producción
 
-## Autor
+Desde un entorno que tenga cargadas las variables reales:
 
-**Nahuel Pedreyra**
-📧 vetpaw.app@gmail.com
-🔗 [LinkedIn](https://www.linkedin.com/in/nahuelprogram17/)
-💻 [GitHub](https://github.com/NahuelProgram17)
+```powershell
+python manage.py audit_production
+```
+
+La auditoría revisa configuración segura, conexión a PostgreSQL, migraciones,
+correo, Cloudinary y notificaciones push sin mostrar valores secretos.
+
+## Backup lógico
+
+```powershell
+python manage.py backup_vetpaw --output-dir backups
+python manage.py verify_vetpaw_backup backups\vetpaw-backup-FECHA.json.gz
+```
+
+El comando genera el `.json.gz` y un archivo `.sha256`. Guardá ambos fuera del
+servidor. Las imágenes viven en Cloudinary y deben conservarse también allí.
+
+## Operación
+
+- Railway ejecuta las migraciones antes de iniciar el servidor.
+- GitHub Actions ejecuta `send_reminders` una vez por hora.
+- Los avisos de mensajes sin leer se marcan para no enviarse repetidamente.
+- Los errores de API incluyen `X-Request-ID` para encontrarlos en los logs.
+
+La guía completa está en `docs/PRODUCCION_Y_RECUPERACION.md`.
