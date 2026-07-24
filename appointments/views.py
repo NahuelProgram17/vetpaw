@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 
 from django.db.models import Avg
@@ -13,6 +14,9 @@ from pets.models import Pet
 
 from .models import Appointment, Review, Visit
 from .serializers import AppointmentSerializer, ReviewSerializer, VisitSerializer
+
+logger = logging.getLogger(__name__)
+
 
 class VisitViewSet(viewsets.ModelViewSet):
     serializer_class = VisitSerializer
@@ -310,8 +314,8 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             )
             msg.attach_alternative(html, 'text/html')
             msg.send()
-        except Exception as e:
-            print(f'Error enviando mail de confirmación: {e}')
+        except Exception:
+            logger.exception('Error enviando mail de confirmación de turno')
     
         return Response({'message': 'Turno confirmado.'})
 
@@ -388,8 +392,8 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             )
             msg.attach_alternative(html, 'text/html')
             msg.send()
-        except Exception as e:
-            print(f'Error enviando mail de cancelación: {e}')
+        except Exception:
+            logger.exception('Error enviando mail de cancelación de turno')
     
         return Response({'message': 'Turno cancelado.'})
 
