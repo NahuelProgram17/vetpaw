@@ -66,7 +66,7 @@ class UserSerializer(serializers.ModelSerializer):
             'account_status', 'professional_verification',
         ]
         read_only_fields = [
-            'id', 'created_at', 'is_approved', 'is_staff', 'is_superuser',
+            'id', 'created_at', 'role', 'is_approved', 'is_staff', 'is_superuser',
             'can_access_admin', 'can_moderate_community',
             'profile_name', 'profile_url', 'profile_completion', 'profile_logo',
             'account_status', 'professional_verification',
