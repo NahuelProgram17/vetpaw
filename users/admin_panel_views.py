@@ -841,7 +841,7 @@ def account_moderation_action(request, user_id):
         return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
 
     from community.models import Report
-    from users.models import AccountSanction, User
+    from users.models import AbuseSignal, AccountSanction, User
     from .sanctions import active_sanctions_queryset, serialize_account_sanction
 
     try:
@@ -881,6 +881,7 @@ def account_moderation_action(request, user_id):
     internal_note = str(request.data.get('internal_note') or '').strip()[:2000]
 
     source_report = None
+    source_abuse_signal = None
     source_report_id = request.data.get('source_report_id')
     if source_report_id not in (None, ''):
         try:
@@ -889,6 +890,15 @@ def account_moderation_action(request, user_id):
             return Response({'error': 'El reporte asociado no existe.'}, status=status.HTTP_400_BAD_REQUEST)
         if _report_target_user_id(source_report) != target.id:
             return Response({'error': 'El reporte no corresponde a esta cuenta.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    source_abuse_signal_id = request.data.get('source_abuse_signal_id')
+    if source_abuse_signal_id not in (None, ''):
+        try:
+            source_abuse_signal = AbuseSignal.objects.get(pk=source_abuse_signal_id)
+        except (AbuseSignal.DoesNotExist, TypeError, ValueError):
+            return Response({'error': 'La señal de abuso no existe.'}, status=status.HTTP_400_BAD_REQUEST)
+        if source_abuse_signal.user_id != target.id:
+            return Response({'error': 'La señal de abuso no corresponde a esta cuenta.'}, status=status.HTTP_400_BAD_REQUEST)
 
     kind = AccountSanction.KIND_PERMANENT_BAN if action == 'ban' else AccountSanction.KIND_SUSPENSION
     ends_at = None
@@ -928,7 +938,16 @@ def account_moderation_action(request, user_id):
             ends_at=ends_at,
             applied_by=request.user,
             source_report_id=source_report.id if source_report else None,
+            source_abuse_signal=source_abuse_signal,
         )
+        if source_abuse_signal:
+            source_abuse_signal.status = AbuseSignal.STATUS_ACTIONED
+            source_abuse_signal.moderator_notes = internal_note or reason
+            source_abuse_signal.reviewed_by = request.user
+            source_abuse_signal.reviewed_at = now
+            source_abuse_signal.save(update_fields=[
+                'status', 'moderator_notes', 'reviewed_by', 'reviewed_at', 'updated_at',
+            ])
         if source_report:
             source_report.status = Report.STATUS_ACTIONED
             source_report.moderator_notes = internal_note or reason
@@ -941,3 +960,223 @@ def account_moderation_action(request, user_id):
         'account': serialize_moderation_account(target, sanction),
         'sanction': serialize_account_sanction(sanction),
     }, status=status.HTTP_201_CREATED)
+
+
+def _serialize_abuse_signal(signal):
+    user = signal.user
+    return {
+        'id': signal.id,
+        'user_id': signal.user_id,
+        'username': user.username if user else '',
+        'email': user.email if user else '',
+        'role': user.role if user else '',
+        'role_display': user.get_role_display() if user else '',
+        'profile_name': _professional_profile_name(user) if user else '',
+        'ip_address': signal.ip_address,
+        'category': signal.category,
+        'category_display': signal.get_category_display(),
+        'severity': signal.severity,
+        'severity_display': signal.get_severity_display(),
+        'status': signal.status,
+        'status_display': signal.get_status_display(),
+        'action_key': signal.action_key,
+        'fingerprint': signal.fingerprint,
+        'content_excerpt': signal.content_excerpt,
+        'details': signal.details or {},
+        'occurrences': signal.occurrences,
+        'first_seen_at': signal.first_seen_at.isoformat() if signal.first_seen_at else None,
+        'last_seen_at': signal.last_seen_at.isoformat() if signal.last_seen_at else None,
+        'reviewed_by_id': signal.reviewed_by_id,
+        'reviewed_by': signal.reviewed_by.username if signal.reviewed_by_id else '',
+        'reviewed_at': signal.reviewed_at.isoformat() if signal.reviewed_at else None,
+        'moderator_notes': signal.moderator_notes,
+    }
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def abuse_signals(request):
+    if not is_admin(request.user):
+        return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
+
+    from users.models import AbuseSignal
+
+    queryset = AbuseSignal.objects.select_related(
+        'user', 'user__clinic_profile', 'user__business_profile', 'user__shelter_profile',
+        'reviewed_by',
+    ).all()
+    signal_status = str(request.query_params.get('status') or '').strip()
+    if signal_status in dict(AbuseSignal.STATUS_CHOICES):
+        queryset = queryset.filter(status=signal_status)
+    category = str(request.query_params.get('category') or '').strip()
+    if category in dict(AbuseSignal.CATEGORY_CHOICES):
+        queryset = queryset.filter(category=category)
+    severity = str(request.query_params.get('severity') or '').strip()
+    if severity in dict(AbuseSignal.SEVERITY_CHOICES):
+        queryset = queryset.filter(severity=severity)
+    user_id = request.query_params.get('user_id')
+    if user_id:
+        queryset = queryset.filter(user_id=user_id)
+    search = str(request.query_params.get('search') or '').strip()
+    if search:
+        query = (
+            Q(user__username__icontains=search)
+            | Q(user__email__icontains=search)
+            | Q(content_excerpt__icontains=search)
+            | Q(action_key__icontains=search)
+        )
+        from django.core.exceptions import ValidationError as IPValidationError
+        from django.core.validators import validate_ipv46_address
+        try:
+            validate_ipv46_address(search)
+        except IPValidationError:
+            pass
+        else:
+            query |= Q(ip_address=search)
+        queryset = queryset.filter(query)
+
+    page, page_size = _pagination_values(request)
+    total, start, end = _paginate_queryset(queryset, page, page_size)
+    now = timezone.now()
+    pending = AbuseSignal.objects.filter(status=AbuseSignal.STATUS_PENDING)
+    return Response({
+        'summary': {
+            'pending': pending.count(),
+            'high_risk_pending': pending.filter(severity=AbuseSignal.SEVERITY_HIGH).count(),
+            'last_24_hours': AbuseSignal.objects.filter(last_seen_at__gte=now - timedelta(hours=24)).count(),
+            'accounts_flagged': pending.exclude(user_id=None).values('user_id').distinct().count(),
+            'origins_without_account': pending.filter(user_id=None).exclude(ip_address=None).values('ip_address').distinct().count(),
+        },
+        'count': total,
+        'page': page,
+        'page_size': page_size,
+        'next': page + 1 if end < total else None,
+        'previous': page - 1 if page > 1 else None,
+        'results': [_serialize_abuse_signal(row) for row in queryset[start:end]],
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def abuse_accounts(request):
+    if not is_admin(request.user):
+        return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
+
+    from users.abuse import risk_score_for_signals, risk_status_for_score
+    from users.models import AbuseSignal, User
+    from .sanctions import active_sanctions_queryset, serialize_account_sanction
+
+    now = timezone.now()
+    unresolved = list(
+        AbuseSignal.objects.filter(
+            user__isnull=False,
+            status__in=(AbuseSignal.STATUS_PENDING, AbuseSignal.STATUS_REVIEWED),
+            last_seen_at__gte=now - timedelta(days=30),
+        ).select_related('user').order_by('-last_seen_at')
+    )
+    by_user = {}
+    for signal in unresolved:
+        by_user.setdefault(signal.user_id, []).append(signal)
+    active = {
+        row.user_id: row
+        for row in active_sanctions_queryset(now).select_related('user', 'applied_by', 'revoked_by')
+    }
+    user_ids = set(by_user) | set(active)
+    queryset = User.objects.select_related(
+        'clinic_profile', 'business_profile', 'shelter_profile'
+    ).filter(id__in=user_ids).order_by('username')
+    search = str(request.query_params.get('search') or '').strip()
+    if search:
+        queryset = queryset.filter(
+            Q(username__icontains=search)
+            | Q(email__icontains=search)
+            | Q(first_name__icontains=search)
+            | Q(last_name__icontains=search)
+        )
+    role = str(request.query_params.get('role') or '').strip()
+    if role in dict(User.ROLE_CHOICES):
+        queryset = queryset.filter(role=role)
+
+    rows = []
+    for user in queryset:
+        signals = by_user.get(user.id, [])
+        score = risk_score_for_signals(signals)
+        sanction = active.get(user.id)
+        risk_status = risk_status_for_score(score, sanction)
+        requested_risk = str(request.query_params.get('risk') or '').strip()
+        if requested_risk and requested_risk != risk_status:
+            continue
+        rows.append({
+            'user_id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'role': user.role,
+            'role_display': user.get_role_display(),
+            'profile_name': _professional_profile_name(user),
+            'risk_score': score,
+            'risk_status': risk_status,
+            'risk_status_display': {
+                'normal': 'Normal',
+                'watch': 'En observación',
+                'high_risk': 'Riesgo alto',
+                'temporarily_blocked': 'Bloqueada temporalmente',
+                'banned': 'Expulsada',
+            }.get(risk_status, risk_status),
+            'pending_signals': sum(row.status == AbuseSignal.STATUS_PENDING for row in signals),
+            'high_signals': sum(row.severity == AbuseSignal.SEVERITY_HIGH for row in signals),
+            'occurrences': sum(row.occurrences for row in signals),
+            'last_signal_at': max((row.last_seen_at for row in signals), default=None).isoformat() if signals else None,
+            'active_sanction': serialize_account_sanction(sanction),
+        })
+    rows.sort(key=lambda row: (row['risk_score'], row['occurrences']), reverse=True)
+    page, page_size = _pagination_values(request)
+    total = len(rows)
+    start = (page - 1) * page_size
+    end = start + page_size
+    return Response({
+        'count': total,
+        'page': page,
+        'page_size': page_size,
+        'next': page + 1 if end < total else None,
+        'previous': page - 1 if page > 1 else None,
+        'results': rows[start:end],
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def abuse_signal_action(request, signal_id):
+    if not is_admin(request.user):
+        return Response({'error': 'Acceso denegado.'}, status=status.HTTP_403_FORBIDDEN)
+
+    from users.models import AbuseSignal
+
+    try:
+        signal = AbuseSignal.objects.select_related(
+            'user', 'user__clinic_profile', 'user__business_profile', 'user__shelter_profile',
+            'reviewed_by',
+        ).get(pk=signal_id)
+    except AbuseSignal.DoesNotExist:
+        return Response({'error': 'La señal no existe.'}, status=status.HTTP_404_NOT_FOUND)
+
+    decision = str(request.data.get('decision') or '').strip().lower()
+    mapping = {
+        'review': AbuseSignal.STATUS_REVIEWED,
+        'dismiss': AbuseSignal.STATUS_DISMISSED,
+        'action': AbuseSignal.STATUS_ACTIONED,
+    }
+    if decision not in mapping:
+        return Response({'error': 'Elegí revisar, descartar o marcar que se tomó una medida.'}, status=status.HTTP_400_BAD_REQUEST)
+    signal.status = mapping[decision]
+    signal.moderator_notes = str(request.data.get('notes') or '').strip()[:2000]
+    signal.reviewed_by = request.user
+    signal.reviewed_at = timezone.now()
+    signal.save(update_fields=['status', 'moderator_notes', 'reviewed_by', 'reviewed_at', 'updated_at'])
+    return Response({
+        'message': {
+            'review': 'La señal quedó marcada como revisada.',
+            'dismiss': 'La señal fue descartada.',
+            'action': 'La señal quedó vinculada a una medida de moderación.',
+        }[decision],
+        'signal': _serialize_abuse_signal(signal),
+    })

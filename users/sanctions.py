@@ -50,6 +50,7 @@ def serialize_account_sanction(sanction):
         'applied_by_id': sanction.applied_by_id,
         'applied_by': sanction.applied_by.username if sanction.applied_by_id else '',
         'source_report_id': sanction.source_report_id,
+        'source_abuse_signal_id': sanction.source_abuse_signal_id,
         'revoked_at': _iso(sanction.revoked_at),
         'revoked_by_id': sanction.revoked_by_id,
         'revoked_by': sanction.revoked_by.username if sanction.revoked_by_id else '',

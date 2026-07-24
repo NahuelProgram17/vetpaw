@@ -6,7 +6,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from datetime import timedelta
 from rest_framework import mixins, permissions, status, viewsets
-from rest_framework.decorators import action, api_view, parser_classes, permission_classes
+from rest_framework.decorators import action, api_view, parser_classes, permission_classes, throttle_classes
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
@@ -50,7 +50,16 @@ from .social_profiles import (
     target_kwargs,
     target_owner,
 )
-from .throttles import CommunityActionThrottle, CommunityCommentThrottle, CommunityExploreThrottle, CommunityPostThrottle
+from .throttles import (
+    CommunityActionThrottle, CommunityCommentBurstThrottle, CommunityCommentThrottle,
+    CommunityExploreThrottle, CommunityFollowThrottle, CommunityPostBurstThrottle,
+    CommunityPostThrottle, CommunityReportBurstThrottle, CommunityReportThrottle,
+)
+from users.abuse import (
+    guard_text_action, record_abuse_signal, record_false_report_pattern,
+    record_successful_action,
+)
+from users.models import AbuseAction, AbuseSignal
 from .serializers import (
     BlockedUserSerializer,
     CommentSerializer,
@@ -81,9 +90,9 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
 
     def get_throttles(self):
         if self.action == 'create':
-            return [CommunityPostThrottle()]
+            return [CommunityPostBurstThrottle(), CommunityPostThrottle()]
         if self.action == 'comments_action' and self.request.method == 'POST':
-            return [CommunityCommentThrottle()]
+            return [CommunityCommentBurstThrottle(), CommunityCommentThrottle()]
         if self.action == 'share':
             return [CommunityExploreThrottle()]
         if self.action in ('react', 'save_post'):
@@ -183,7 +192,25 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
         return queryset.order_by('-created_at')
 
     def perform_create(self, serializer):
+        text = serializer.validated_data.get('text', '')
+        guard_text_action(
+            user=self.request.user,
+            request=self.request,
+            action_type=AbuseAction.ACTION_POST,
+            text=text,
+            target_key='community',
+            duplicate_minutes=30,
+            repeated_link_limit=3,
+            minimum_length=18,
+        )
         post = serializer.save()
+        record_successful_action(
+            user=self.request.user,
+            request=self.request,
+            action_type=AbuseAction.ACTION_POST,
+            text=post.text,
+            target_key=f'post:{post.id}',
+        )
         sync_mention_notifications(post.text, self.request.user, post)
 
     def perform_update(self, serializer):
@@ -267,6 +294,16 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
 
         serializer = CommentSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
+        guard_text_action(
+            user=request.user,
+            request=request,
+            action_type=AbuseAction.ACTION_COMMENT,
+            text=serializer.validated_data.get('text', ''),
+            target_key=f'post:{post.id}',
+            duplicate_minutes=15,
+            repeated_link_limit=3,
+            minimum_length=18,
+        )
         parent = None
         parent_id = request.data.get('parent_id') or request.data.get('parent')
         if parent_id:
@@ -279,6 +316,13 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
                 pk=parent_id,
             )
         comment = serializer.save(post=post, author=request.user, parent=parent)
+        record_successful_action(
+            user=request.user,
+            request=request,
+            action_type=AbuseAction.ACTION_COMMENT,
+            text=comment.text,
+            target_key=f'post:{post.id}',
+        )
         already_notified = set()
         if not parent or parent.author_id != post.created_by_id:
             if create_comment_notification(post, request.user, comment):
@@ -370,7 +414,7 @@ class PetSocialProfileViewSet(viewsets.GenericViewSet):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_throttles(self):
-        return [CommunityActionThrottle()] if self.action == 'follow' else []
+        return [CommunityFollowThrottle()] if self.action == 'follow' else []
 
     def get_permissions(self):
         if self.action == 'retrieve':
@@ -421,12 +465,24 @@ class PetSocialProfileViewSet(viewsets.GenericViewSet):
         if not profile.is_public:
             pending, created = PetFollowRequest.objects.get_or_create(follower=request.user, pet=pet)
             if created:
+                record_successful_action(
+                    user=request.user,
+                    request=request,
+                    action_type=AbuseAction.ACTION_FOLLOW,
+                    target_key=f'pet:{pet.id}',
+                )
                 create_follow_request_notification(pet, request.user)
             else:
                 pending.delete()
                 remove_follow_request_notification(pet, request.user)
             return Response({'following': False, 'requested': created, 'followers_count': pet.social_followers.count()})
         PetFollow.objects.create(follower=request.user, pet=pet)
+        record_successful_action(
+            user=request.user,
+            request=request,
+            action_type=AbuseAction.ACTION_FOLLOW,
+            target_key=f'pet:{pet.id}',
+        )
         create_follow_notification(pet, request.user)
         return Response({'following': True, 'requested': False, 'followers_count': pet.social_followers.count()})
 
@@ -630,6 +686,7 @@ class PushSubscriptionViewSet(viewsets.GenericViewSet):
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
+@throttle_classes([CommunityFollowThrottle])
 def community_profile_follow(request, profile_type, identifier):
     try:
         target = resolve_profile(profile_type, identifier)
@@ -657,6 +714,12 @@ def community_profile_follow(request, profile_type, identifier):
         if not profile.is_public:
             pending, created = PetFollowRequest.objects.get_or_create(follower=request.user, pet=target)
             if created:
+                record_successful_action(
+                    user=request.user,
+                    request=request,
+                    action_type=AbuseAction.ACTION_FOLLOW,
+                    target_key=f'pet:{target.id}',
+                )
                 create_follow_request_notification(target, request.user)
             else:
                 pending.delete()
@@ -668,6 +731,12 @@ def community_profile_follow(request, profile_type, identifier):
             })
 
     PetFollow.objects.create(**filters)
+    record_successful_action(
+        user=request.user,
+        request=request,
+        action_type=AbuseAction.ACTION_FOLLOW,
+        target_key=f'{profile_type}:{target.id}',
+    )
     create_follow_notification(target, request.user)
     return Response({
         'following': True,
@@ -939,7 +1008,9 @@ class ReportViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, viewsets.Gen
     permission_classes = [permissions.IsAuthenticated]
 
     def get_throttles(self):
-        return [CommunityActionThrottle()] if self.action in ('create', 'moderate') else []
+        if self.action == 'create':
+            return [CommunityReportBurstThrottle(), CommunityReportThrottle()]
+        return [CommunityActionThrottle()] if self.action == 'moderate' else []
 
     def get_queryset(self):
         if is_community_moderator(self.request.user):
@@ -953,7 +1024,40 @@ class ReportViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, viewsets.Gen
         return Report.objects.filter(reporter=self.request.user)
 
     def perform_create(self, serializer):
-        serializer.save(reporter=self.request.user)
+        target_filters = {
+            field: serializer.validated_data[field]
+            for field in ('post', 'comment', 'reported_user')
+            if serializer.validated_data.get(field) is not None
+        }
+        if Report.objects.filter(
+            reporter=self.request.user,
+            status=Report.STATUS_PENDING,
+            **target_filters,
+        ).exists():
+            record_abuse_signal(
+                user=self.request.user,
+                request=self.request,
+                category=AbuseSignal.CATEGORY_FALSE_REPORT,
+                action_key='duplicate_report',
+                severity=AbuseSignal.SEVERITY_WARNING,
+                details={'target': {key: value.pk for key, value in target_filters.items()}},
+                aggregate_minutes=1440,
+            )
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'error': 'Ya enviaste un reporte pendiente sobre este contenido.'})
+        report = serializer.save(reporter=self.request.user)
+        target_key = (
+            f'post:{report.post_id}' if report.post_id
+            else f'comment:{report.comment_id}' if report.comment_id
+            else f'user:{report.reported_user_id}'
+        )
+        record_successful_action(
+            user=self.request.user,
+            request=self.request,
+            action_type=AbuseAction.ACTION_REPORT,
+            text=report.details,
+            target_key=target_key,
+        )
 
     @action(detail=True, methods=['post'])
     def moderate(self, request, pk=None):
@@ -982,6 +1086,8 @@ class ReportViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, viewsets.Gen
         report.reviewed_by = request.user
         report.reviewed_at = timezone.now()
         report.save(update_fields=['status', 'moderator_notes', 'reviewed_by', 'reviewed_at'])
+        if decision == 'dismiss':
+            record_false_report_pattern(report.reporter)
         return Response(self.get_serializer(report).data)
 
 

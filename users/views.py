@@ -4,6 +4,8 @@ from rest_framework.views import APIView
 from django.core.mail import EmailMultiAlternatives
 from django.conf import settings
 from .models import User
+from .abuse import record_registration
+from .throttles import RegistrationDailyThrottle, RegistrationThrottle
 from .permissions import is_vetpaw_admin
 from .serializers import (RegisterSerializer, UserSerializer, CustomTokenObtainPairSerializer, RegisterClinicSerializer, RegisterBusinessSerializer, RegisterShelterSerializer)
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -14,6 +16,7 @@ from django.utils.encoding import force_bytes, force_str
 
 class RegisterView(generics.CreateAPIView):
     """Registro de DUEÑO de mascota. Cuenta activa al instante."""
+    throttle_classes = [RegistrationThrottle, RegistrationDailyThrottle]
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
@@ -22,6 +25,7 @@ class RegisterView(generics.CreateAPIView):
         user = serializer.save()
         user.is_approved = True  # Dueños se auto-aprueban
         user.save()
+        record_registration(user, self.request)
 
 
 class ProfileView(generics.RetrieveUpdateAPIView):
@@ -38,6 +42,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
 class RegisterClinicView(generics.CreateAPIView):
     """Registro de VETERINARIA. Cuenta queda PENDIENTE de aprobación del admin."""
+    throttle_classes = [RegistrationThrottle, RegistrationDailyThrottle]
     queryset = User.objects.all()
     serializer_class = RegisterClinicSerializer
     permission_classes = [permissions.AllowAny]
@@ -55,9 +60,11 @@ class RegisterClinicView(generics.CreateAPIView):
                 plan_status=Clinic.PLAN_INACTIVE,
                 **clinic_data,
             )
+            record_registration(user, self.request)
 
 
 class RegisterBusinessView(generics.CreateAPIView):
+    throttle_classes = [RegistrationThrottle, RegistrationDailyThrottle]
     queryset = User.objects.all()
     serializer_class = RegisterBusinessSerializer
     permission_classes = [permissions.AllowAny]
@@ -70,9 +77,11 @@ class RegisterBusinessView(generics.CreateAPIView):
             user.is_approved = False
             user.save(update_fields=['is_approved'])
             BusinessProfile.objects.create(owner=user, **getattr(user, '_partner_profile_data', {}))
+            record_registration(user, self.request)
 
 
 class RegisterShelterView(generics.CreateAPIView):
+    throttle_classes = [RegistrationThrottle, RegistrationDailyThrottle]
     queryset = User.objects.all()
     serializer_class = RegisterShelterSerializer
     permission_classes = [permissions.AllowAny]
@@ -85,6 +94,7 @@ class RegisterShelterView(generics.CreateAPIView):
             user.is_approved = False
             user.save(update_fields=['is_approved'])
             ShelterProfile.objects.create(owner=user, **getattr(user, '_partner_profile_data', {}))
+            record_registration(user, self.request)
 
 
 class PasswordResetRequestView(APIView):

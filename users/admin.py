@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import AccountSanction, User
+from .models import AbuseAction, AbuseSignal, AccountSanction, User
 
 
 @admin.register(User)
@@ -34,3 +34,19 @@ class AccountSanctionAdmin(admin.ModelAdmin):
     @admin.display(description='Estado')
     def effective_status_display(self, obj):
         return obj.effective_status
+
+
+@admin.register(AbuseSignal)
+class AbuseSignalAdmin(admin.ModelAdmin):
+    list_display = ['category', 'user', 'ip_address', 'severity', 'status', 'occurrences', 'last_seen_at']
+    list_filter = ['category', 'severity', 'status', 'last_seen_at']
+    search_fields = ['user__username', 'user__email', 'ip_address', 'content_excerpt', 'action_key']
+    readonly_fields = ['first_seen_at', 'last_seen_at', 'created_at', 'updated_at']
+
+
+@admin.register(AbuseAction)
+class AbuseActionAdmin(admin.ModelAdmin):
+    list_display = ['action_type', 'user', 'ip_address', 'target_key', 'created_at']
+    list_filter = ['action_type', 'created_at']
+    search_fields = ['user__username', 'user__email', 'ip_address', 'target_key', 'content_excerpt']
+    readonly_fields = ['created_at']

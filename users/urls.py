@@ -7,6 +7,7 @@ from .views import (
     ApproveClinicView, RejectClinicView, ApproveProfessionalProfileView, RejectProfessionalProfileView,
 )
 from .admin_panel_views import (
+    abuse_accounts, abuse_signal_action, abuse_signals,
     account_moderation_accounts, account_moderation_action, account_moderation_history,
     admin_panel, clinic_plan_action,
 )
@@ -27,6 +28,9 @@ urlpatterns = [
     path('admin/moderation/accounts/', account_moderation_accounts, name='admin-moderation-accounts'),
     path('admin/moderation/accounts/<int:user_id>/', account_moderation_action, name='admin-moderation-account-action'),
     path('admin/moderation/history/', account_moderation_history, name='admin-moderation-history'),
+    path('admin/abuse/signals/', abuse_signals, name='admin-abuse-signals'),
+    path('admin/abuse/accounts/', abuse_accounts, name='admin-abuse-accounts'),
+    path('admin/abuse/signals/<int:signal_id>/', abuse_signal_action, name='admin-abuse-signal-action'),
     path('admin/approve-clinic/<int:user_id>/', ApproveClinicView.as_view(), name='admin-approve-clinic'),
     path('admin/reject-clinic/<int:user_id>/', RejectClinicView.as_view(), name='admin-reject-clinic'),
     path('admin/approve-profile/<int:user_id>/', ApproveProfessionalProfileView.as_view(), name='admin-approve-profile'),

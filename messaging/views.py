@@ -7,12 +7,18 @@ from community.privacy import privacy_for, users_blocked_between
 from django.db.models import Q
 from .models import Message
 from .serializers import MessageSerializer
+from .throttles import MessageBurstThrottle, MessageRateThrottle
+from users.abuse import guard_text_action, record_successful_action
+from users.models import AbuseAction
 
 
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class   = MessageSerializer
     permission_classes = [permissions.IsAuthenticated]
     http_method_names  = ['get', 'post', 'patch', 'delete']
+
+    def get_throttles(self):
+        return [MessageBurstThrottle(), MessageRateThrottle()] if self.action == 'create' else []
 
     def get_queryset(self):
         user = self.request.user
@@ -29,7 +35,26 @@ class MessageViewSet(viewsets.ModelViewSet):
         recipient_privacy = privacy_for(recipient)
         if recipient_privacy and not recipient_privacy.allow_internal_messages:
             raise PermissionDenied('Este perfil no está recibiendo mensajes internos.')
-        serializer.save(sender=self.request.user)
+        content = serializer.validated_data.get('content', '')
+        guard_text_action(
+            user=self.request.user,
+            request=self.request,
+            action_type=AbuseAction.ACTION_MESSAGE,
+            text=content,
+            target_key=f'user:{recipient.id}',
+            duplicate_minutes=10,
+            repeated_link_limit=3,
+            minimum_length=18,
+            duplicate_limit=2,
+        )
+        message = serializer.save(sender=self.request.user)
+        record_successful_action(
+            user=self.request.user,
+            request=self.request,
+            action_type=AbuseAction.ACTION_MESSAGE,
+            text=message.content,
+            target_key=f'user:{recipient.id}',
+        )
 
     @action(detail=False, methods=['post'])
     def mark_read(self, request):
