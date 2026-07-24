@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from community.privacy import privacy_for, users_blocked_between
-from django.db.models import Q
+from django.db.models import Count, Q
 from .models import Message
 from .serializers import MessageSerializer
 from .throttles import MessageBurstThrottle, MessageRateThrottle
@@ -82,21 +82,27 @@ class MessageViewSet(viewsets.ModelViewSet):
         user = self.request.user
         messages = Message.objects.filter(
             Q(sender=user) | Q(recipient=user)
-        ).select_related('sender', 'recipient', 'appointment', 'appointment__pet')
+        ).select_related(
+            'sender', 'recipient', 'appointment', 'appointment__pet'
+        ).order_by('-created_at')
+        unread_by_sender = dict(
+            Message.objects.filter(recipient=user, read=False)
+            .values('sender_id')
+            .annotate(total=Count('id'))
+            .values_list('sender_id', 'total')
+        )
 
         seen = {}
-        for msg in reversed(list(messages)):
-            other = msg.recipient if msg.sender == user else msg.sender
+        for msg in messages.iterator(chunk_size=500):
+            other = msg.recipient if msg.sender_id == user.id else msg.sender
             if other.id not in seen:
                 seen[other.id] = {
-                    'other_user_id':   other.id,
-                    'other_username':  other.username,
-                    'last_message':    msg.content,
-                    'last_date':       msg.created_at,
-                    'unread':          Message.objects.filter(
-                        sender=other, recipient=user, read=False
-                    ).count(),
-                    'appointment_id':  msg.appointment_id,
-                    'pet_name':        msg.appointment.pet.name if msg.appointment else None,
+                    'other_user_id': other.id,
+                    'other_username': other.username,
+                    'last_message': msg.content,
+                    'last_date': msg.created_at,
+                    'unread': unread_by_sender.get(other.id, 0),
+                    'appointment_id': msg.appointment_id,
+                    'pet_name': msg.appointment.pet.name if msg.appointment else None,
                 }
         return Response(list(seen.values()))

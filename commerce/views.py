@@ -1,5 +1,5 @@
 from django.db import transaction
-from django.db.models import Count, F, Q, Sum
+from django.db.models import Count, Exists, F, OuterRef, Q, Sum
 from django.utils import timezone
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
@@ -45,7 +45,15 @@ class CatalogItemViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'patch', 'delete']
 
     def get_queryset(self):
-        queryset = CatalogItem.objects.select_related('business', 'business__owner', 'shared_post').annotate(favorite_total=Count('favorites'))
+        queryset = CatalogItem.objects.select_related('business', 'business__owner', 'shared_post').annotate(
+            favorite_total=Count('favorites', distinct=True)
+        )
+        if self.request.user.is_authenticated:
+            queryset = queryset.annotate(
+                viewer_is_favorite=Exists(
+                    BusinessFavorite.objects.filter(user=self.request.user, catalog_item_id=OuterRef('pk'))
+                )
+            )
         business = owned_business(self.request.user)
         mine = str(self.request.query_params.get('mine') or '').lower() in {'1', 'true', 'yes'}
         if mine and business:
@@ -140,7 +148,15 @@ class PromotionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         now = timezone.now()
-        queryset = Promotion.objects.select_related('business', 'business__owner', 'catalog_item', 'shared_post')
+        queryset = Promotion.objects.select_related('business', 'business__owner', 'catalog_item', 'shared_post').annotate(
+            favorite_total=Count('favorites', distinct=True)
+        )
+        if self.request.user.is_authenticated:
+            queryset = queryset.annotate(
+                viewer_is_favorite=Exists(
+                    BusinessFavorite.objects.filter(user=self.request.user, promotion_id=OuterRef('pk'))
+                )
+            )
         business = owned_business(self.request.user)
         mine = str(self.request.query_params.get('mine') or '').lower() in {'1', 'true', 'yes'}
         if mine and business:

@@ -34,7 +34,7 @@ class CatalogItemSerializer(serializers.ModelSerializer):
     category_display = serializers.CharField(source='get_category_display', read_only=True)
     display_price = serializers.SerializerMethodField()
     is_favorite = serializers.SerializerMethodField()
-    favorites_count = serializers.IntegerField(source='favorites.count', read_only=True)
+    favorites_count = serializers.SerializerMethodField()
     can_edit = serializers.SerializerMethodField()
     shared_post_id = serializers.IntegerField(source='shared_post.id', read_only=True)
 
@@ -64,7 +64,14 @@ class CatalogItemSerializer(serializers.ModelSerializer):
         value = obj.display_price
         return str(value) if value != 'Consultar' and value is not None else value
 
+    def get_favorites_count(self, obj):
+        if hasattr(obj, 'favorite_total'):
+            return obj.favorite_total
+        return obj.favorites.count()
+
     def get_is_favorite(self, obj):
+        if hasattr(obj, 'viewer_is_favorite'):
+            return bool(obj.viewer_is_favorite)
         request = self.context.get('request')
         return bool(request and request.user.is_authenticated and BusinessFavorite.objects.filter(user=request.user, catalog_item=obj).exists())
 
@@ -117,7 +124,7 @@ class PromotionSerializer(serializers.ModelSerializer):
     catalog_item_title = serializers.CharField(source='catalog_item.title', read_only=True)
     is_current = serializers.BooleanField(read_only=True)
     is_favorite = serializers.SerializerMethodField()
-    favorites_count = serializers.IntegerField(source='favorites.count', read_only=True)
+    favorites_count = serializers.SerializerMethodField()
     can_edit = serializers.SerializerMethodField()
     shared_post_id = serializers.IntegerField(source='shared_post.id', read_only=True)
 
@@ -141,7 +148,14 @@ class PromotionSerializer(serializers.ModelSerializer):
     def get_image_url(self, obj):
         return absolute_file_url(self.context.get('request'), obj.image)
 
+    def get_favorites_count(self, obj):
+        if hasattr(obj, 'favorite_total'):
+            return obj.favorite_total
+        return obj.favorites.count()
+
     def get_is_favorite(self, obj):
+        if hasattr(obj, 'viewer_is_favorite'):
+            return bool(obj.viewer_is_favorite)
         request = self.context.get('request')
         return bool(request and request.user.is_authenticated and BusinessFavorite.objects.filter(user=request.user, promotion=obj).exists())
 

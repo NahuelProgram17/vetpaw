@@ -129,11 +129,13 @@ class CommentSerializer(CommentReplySerializer):
         rows = getattr(obj, '_visible_replies', None)
         if rows is None:
             rows = obj.replies.filter(moderation_status=Comment.STATUS_PUBLISHED).select_related('author')
+            blocked_ids = self.context.get('blocked_user_ids')
             request = self.context.get('request')
-            if request and request.user.is_authenticated:
-                blocked = BlockedUser.objects.filter(blocker=request.user).values_list('blocked_id', flat=True)
-                blockers = BlockedUser.objects.filter(blocked=request.user).values_list('blocker_id', flat=True)
-                rows = rows.exclude(author_id__in=list(blocked) + list(blockers))
+            if blocked_ids is None and request and request.user.is_authenticated:
+                blocked_ids = set(BlockedUser.objects.filter(blocker=request.user).values_list('blocked_id', flat=True))
+                blocked_ids.update(BlockedUser.objects.filter(blocked=request.user).values_list('blocker_id', flat=True))
+            if blocked_ids:
+                rows = rows.exclude(author_id__in=blocked_ids)
         return CommentReplySerializer(rows, many=True, context=self.context).data
 
     def get_replies_count(self, obj):
@@ -364,11 +366,13 @@ class PostSerializer(serializers.ModelSerializer):
 
     def get_comments_preview(self, obj):
         queryset = obj.comments.filter(moderation_status=Comment.STATUS_PUBLISHED, parent__isnull=True).select_related('author')
+        blocked_ids = self.context.get('blocked_user_ids')
         request = self.context.get('request')
-        if request and request.user.is_authenticated:
-            blocked_ids = BlockedUser.objects.filter(blocker=request.user).values_list('blocked_id', flat=True)
-            blocker_ids = BlockedUser.objects.filter(blocked=request.user).values_list('blocker_id', flat=True)
-            queryset = queryset.exclude(author_id__in=list(blocked_ids) + list(blocker_ids))
+        if blocked_ids is None and request and request.user.is_authenticated:
+            blocked_ids = set(BlockedUser.objects.filter(blocker=request.user).values_list('blocked_id', flat=True))
+            blocked_ids.update(BlockedUser.objects.filter(blocked=request.user).values_list('blocker_id', flat=True))
+        if blocked_ids:
+            queryset = queryset.exclude(author_id__in=blocked_ids)
         comments = list(queryset.order_by('-created_at')[:3])
         comments.reverse()
         return CommentSerializer(comments, many=True, context=self.context).data
@@ -378,14 +382,20 @@ class PostSerializer(serializers.ModelSerializer):
         return request.user if request and request.user.is_authenticated else None
 
     def get_reacted_by_me(self, obj):
+        if hasattr(obj, 'viewer_reacted'):
+            return bool(obj.viewer_reacted)
         user = self._viewer()
         return bool(user and obj.reactions.filter(user=user).exists())
 
     def get_saved_by_me(self, obj):
+        if hasattr(obj, 'viewer_saved'):
+            return bool(obj.viewer_saved)
         user = self._viewer()
         return bool(user and obj.saved_by.filter(user=user).exists())
 
     def get_following_actor(self, obj):
+        if hasattr(obj, 'viewer_following_actor'):
+            return bool(obj.viewer_following_actor)
         user = self._viewer()
         if not user:
             return False

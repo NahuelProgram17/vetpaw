@@ -27,10 +27,10 @@ class VisitViewSet(viewsets.ModelViewSet):
         if user.is_clinic:
             try:
                 clinic = user.clinic_profile
-                return Visit.objects.filter(clinic=clinic)
+                return Visit.objects.filter(clinic=clinic).select_related('pet', 'clinic')
             except Exception:
                 return Visit.objects.none()
-        return Visit.objects.filter(pet__owner=user)
+        return Visit.objects.filter(pet__owner=user).select_related('pet', 'clinic')
 
     def perform_create(self, serializer):
         if not self.request.user.is_clinic:
@@ -99,11 +99,11 @@ class AppointmentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         if user.is_owner:
-            return Appointment.objects.filter(owner=user)
+            return Appointment.objects.filter(owner=user).select_related('owner', 'pet', 'clinic')
         elif user.is_clinic:
             try:
                 clinic = user.clinic_profile
-                return Appointment.objects.filter(clinic=clinic)
+                return Appointment.objects.filter(clinic=clinic).select_related('owner', 'pet', 'clinic')
             except Exception:
                 return Appointment.objects.none()
         return Appointment.objects.none()
@@ -465,12 +465,12 @@ class ReviewViewSet(viewsets.ModelViewSet):
         user = self.request.user
         clinic_id = self.request.query_params.get('clinic')
         if clinic_id:
-            return Review.objects.filter(clinic_id=clinic_id)
+            return Review.objects.filter(clinic_id=clinic_id).select_related('owner', 'clinic', 'appointment__pet')
         if user.is_owner:
-            return Review.objects.filter(owner=user)
+            return Review.objects.filter(owner=user).select_related('owner', 'clinic', 'appointment__pet')
         if user.is_clinic:
             try:
-                return Review.objects.filter(clinic=user.clinic_profile)
+                return Review.objects.filter(clinic=user.clinic_profile).select_related('owner', 'clinic', 'appointment__pet')
             except Exception:
                 return Review.objects.none()
         return Review.objects.none()

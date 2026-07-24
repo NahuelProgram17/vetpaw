@@ -1,7 +1,7 @@
 import re
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db.models import Count, F, Prefetch, Q
+from django.db.models import Count, Exists, F, OuterRef, Prefetch, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from datetime import timedelta
@@ -106,6 +106,15 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
             return [permissions.IsAuthenticated(), IsOwnerOrModerator()]
         return [permissions.IsAuthenticated()]
 
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        user = self.request.user
+        if user.is_authenticated:
+            blocked = set(BlockedUser.objects.filter(blocker=user).values_list('blocked_id', flat=True))
+            blocked.update(BlockedUser.objects.filter(blocked=user).values_list('blocker_id', flat=True))
+            context['blocked_user_ids'] = blocked
+        return context
+
     def get_queryset(self):
         queryset = Post.objects.filter(
             is_public=True,
@@ -129,6 +138,18 @@ class CommunityPostViewSet(viewsets.ModelViewSet):
         request = self.request
         user = request.user
         queryset = visible_posts_for(queryset, user)
+        if user.is_authenticated:
+            viewer_follow = PetFollow.objects.filter(follower=user).filter(
+                Q(pet_id=OuterRef('pet_id'))
+                | Q(clinic_id=OuterRef('clinic_id'))
+                | Q(business_id=OuterRef('business_id'))
+                | Q(shelter_id=OuterRef('shelter_id'))
+            )
+            queryset = queryset.annotate(
+                viewer_reacted=Exists(Reaction.objects.filter(post_id=OuterRef('pk'), user=user)),
+                viewer_saved=Exists(SavedPost.objects.filter(post_id=OuterRef('pk'), user=user)),
+                viewer_following_actor=Exists(viewer_follow),
+            )
 
         feed = request.query_params.get('feed')
         if feed == 'following':
